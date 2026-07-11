@@ -48,3 +48,11 @@ Cambio principal:
 - Los focos cercanos se calculan alrededor de cada zona monitoreada usando radio de zona + 60 km.
 - Esto permite ver de dónde puede venir la presión de fuego sin saturar con todos los focos de Santa Cruz.
 - Los 5000 focos generales siguen disponibles con el botón "Todos los focos".
+## Versión 2.3 - Mapa regional + operativo
+
+Cambio principal:
+- La vista inicial ahora muestra todos los focos regionales descargados junto con zonas y alertas.
+- Los focos regionales se muestran con puntos pequeños y semitransparentes.
+- Las alertas quedan encima con mayor tamaño y prioridad visual.
+- Se agregan modos: Vista regional, Vista operativa, Solo alertas, Focos cercanos y Limpiar focos.
+- Esto permite ver el panorama Santa Cruz/Bolivia y también analizar focos cercanos a zonas monitoreadas.
