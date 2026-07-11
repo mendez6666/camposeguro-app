@@ -34,4 +34,12 @@ Después de desplegar, abre:
 /prueba-firms
 ```
 
-Esa pantalla prueba FIRMS desde Render sin guardar datos.
+Esa pantalla prueba FIRMS desde Render sin guardar datos.## Versión 1.9
+
+Esta versión usa una estrategia automática FIRMS:
+
+1. Consulta Santa Cruz.
+2. Si no encuentra focos, consulta Bolivia.
+3. No consulta toda Sudamérica para evitar ruido y exceso de datos.
+
+La API regional sigue siendo `South_America`, pero el BBOX operativo es Santa Cruz/Bolivia.

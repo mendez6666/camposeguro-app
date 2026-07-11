@@ -12,10 +12,10 @@ from config import FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCE
 from db import init_db, seed_demo_data, get_conn, rows_to_dicts
 from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
 from emailer import preparar_correos_pendientes, procesar_correos_pendientes, estadisticas_correos, listar_correos, smtp_config_ok
-from firms_api import test_source, masked_key
+from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 
 
-app = FastAPI(title="CampoSeguro v1.8")
+app = FastAPI(title="CampoSeguro v1.9")
 
 
 def esc(x):
@@ -121,6 +121,7 @@ pre {{ white-space:pre-wrap; background:#111827; color:#e5e7eb; padding:14px; bo
 <a href="/usuarios">Usuarios</a>
 <a href="/correos">Correos</a>
 <a href="/prueba-firms">Prueba FIRMS</a>
+<a href="/prueba-firms">Prueba FIRMS</a>
 <a href="/configuracion">Configuración</a>
 </nav>
 <main>{body}</main>
@@ -216,7 +217,8 @@ def inicio():
           <div class="ok">
             <strong>Estado del sistema</strong><br>
             Llave FIRMS: {esc(key_status)}<br>
-            Área: Santa Cruz<br>
+            Región API: Sudamérica / South_America<br>
+            Estrategia: Santa Cruz → Bolivia<br>
             Rango: últimos {esc(FIRMS_DAY_RANGE)} día(s)
           </div>
         </section>
@@ -260,6 +262,9 @@ def actualizar():
         body = f"""
         <div class="card">
           <h2>Monitoreo actualizado</h2>
+          <p><strong>Región API:</strong> {esc(r.get('strategy_info', {}).get('api_region', 'South_America'))}</p>
+          <p><strong>Área usada:</strong> {esc(r.get('strategy_info', {}).get('selected_area', ''))}</p>
+          <p><strong>BBOX usado:</strong> {esc(r.get('strategy_info', {}).get('selected_bbox', ''))}</p>
           <p><strong>Focos descargados:</strong> {esc(r['focos_descargados'])}</p>
           <p><strong>Focos nuevos guardados:</strong> {esc(r['focos_nuevos_guardados'])}</p>
           <p><strong>Alertas totales recalculadas:</strong> {esc(r['alertas_totales'])}</p>
@@ -895,9 +900,15 @@ def correos_enviar():
 
 
 @app.get("/prueba-firms", response_class=HTMLResponse)
-def prueba_firms(bbox: str = "", days: int = 1):
+def prueba_firms(bbox: str = "", days: int = 1, preset: str = ""):
     try:
-        bbox_actual = bbox or FIRMS_AREA_BBOX
+        if preset in AREA_PRESETS:
+            bbox_actual = AREA_PRESETS[preset]
+            preset_actual = preset
+        else:
+            bbox_actual = bbox or FIRMS_AREA_BBOX
+            preset_actual = "Personalizada"
+
         dias = int(days or FIRMS_DAY_RANGE)
         tests = []
         for source in FIRMS_SOURCES:
@@ -931,8 +942,9 @@ def prueba_firms(bbox: str = "", days: int = 1):
         body = f"""
         <div class="card">
           <h2>Prueba técnica FIRMS</h2>
-          <p>Esta pantalla prueba la conexión con FIRMS desde Render sin guardar nada en la base.</p>
+          <p>La API usada es regional: <strong>{esc(API_REGION_LABEL)}</strong>. CampoSeguro consulta por BBOX operativo, no toda Sudamérica.</p>
           <p><strong>Llave actual:</strong> {esc(masked_key())}</p>
+          <p><strong>Área de prueba:</strong> {esc(preset_actual)}</p>
           <p><strong>BBOX usado:</strong> {esc(bbox_actual)}</p>
           <p><strong>Días usados:</strong> {esc(dias)}</p>
           <p><strong>Total de filas leídas:</strong> {esc(total)}</p>
@@ -953,14 +965,17 @@ def prueba_firms(bbox: str = "", days: int = 1):
                 </select>
               </div>
             </div>
-            <p><button type="submit">Probar FIRMS</button></p>
+            <p><button type="submit">Probar BBOX personalizada</button></p>
           </form>
 
           <p>
-            <a class="button light" href="/prueba-firms?bbox=-64.9,-20.6,-57.0,-13.0&days=5">Probar Santa Cruz 5 días</a>
-            <a class="button light" href="/prueba-firms?bbox=-70.0,-23.5,-57.0,-9.0&days=5">Probar Bolivia 5 días</a>
-            <a class="button light" href="/prueba-firms?bbox=-82.0,-56.0,-34.0,13.0&days=3">Probar Sudamérica 3 días</a>
+            <a class="button light" href="/prueba-firms?preset=Santa%20Cruz&days=5">Probar Santa Cruz 5 días</a>
+            <a class="button light" href="/prueba-firms?preset=Bolivia&days=5">Probar Bolivia 5 días</a>
           </p>
+
+          <div class="notice">
+            Actualización automática: CampoSeguro consulta Santa Cruz primero. Si no encuentra focos, consulta Bolivia. No consulta Sudamérica completa para evitar ruido operativo.
+          </div>
         </div>
 
         <div class="card">
@@ -985,7 +1000,9 @@ def configuracion():
     <div class="card">
       <h2>Configuración actual</h2>
       <p><strong>Llave FIRMS:</strong> {esc(key_status)}</p>
-      <p><strong>Área monitoreada:</strong> {esc(FIRMS_AREA_BBOX)}</p>
+      <p><strong>Región API:</strong> Sudamérica / South_America</p>
+      <p><strong>Estrategia automática:</strong> Santa Cruz → Bolivia</p>
+      <p><strong>BBOX base:</strong> {esc(FIRMS_AREA_BBOX)}</p>
       <p><strong>Rango de días:</strong> {esc(FIRMS_DAY_RANGE)}</p>
       <p><strong>Fuentes:</strong> {esc(FIRMS_SOURCES)}</p>
       <p><strong>Ubicación desde teléfono:</strong> disponible al crear o editar zonas.</p>

@@ -1,6 +1,6 @@
 import math
 from datetime import datetime, timezone
-from firms_api import fetch_all_sources
+from firms_api import fetch_auto_scz_bolivia
 from db import get_conn
 
 
@@ -71,7 +71,7 @@ def recalcular_alertas_existentes():
 
 
 def run_monitoring():
-    focos, reports = fetch_all_sources()
+    focos, reports, strategy_info = fetch_auto_scz_bolivia()
 
     conn = get_conn()
     fires_before = conn.execute("SELECT COUNT(*) FROM focos").fetchone()[0]
@@ -90,6 +90,7 @@ def run_monitoring():
         "focos_nuevos_guardados": fires_after - fires_before,
         "alertas_totales": alerts_total,
         "reports": reports,
+        "strategy_info": strategy_info,
         "fecha_utc": now_utc()
     }
 
