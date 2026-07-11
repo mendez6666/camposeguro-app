@@ -1,0 +1,913 @@
+from datetime import datetime, timezone
+import html
+import json
+import traceback
+import csv
+from io import StringIO
+
+from fastapi import FastAPI, Form
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+
+from config import FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCES
+from db import init_db, seed_demo_data, get_conn, rows_to_dicts
+from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
+from emailer import preparar_correos_pendientes, procesar_correos_pendientes, estadisticas_correos, listar_correos, smtp_config_ok
+
+
+app = FastAPI(title="CampoSeguro v1.7")
+
+
+def esc(x):
+    return html.escape("" if x is None else str(x))
+
+
+def recomendacion_por_nivel(nivel):
+    if nivel == "CRITICO":
+        return "Verificar de forma prioritaria en campo, comunicar a responsables locales y revisar condiciones de propagación."
+    if nivel == "ATENCION":
+        return "Mantener seguimiento cercano, revisar viento, reportes locales y preparar comunicación preventiva."
+    return "Mantener seguimiento preventivo y verificar si aparecen nuevos focos en las próximas horas."
+
+
+def mensaje_alerta(a):
+    return (
+        f"CampoSeguro informa que se detectó un foco de calor a aproximadamente {a['distancia_km']} km "
+        f"de la zona {a['nombre_zona']}, municipio {a['municipio']}, según datos FIRMS/{a['fuente']} "
+        f"del {a['acq_date']} a horas {a['acq_time']}. Nivel de alerta: {a['nivel']}. "
+        f"Recomendación: {recomendacion_por_nivel(a['nivel'])} "
+        "Esta información es de carácter preventivo y debe ser verificada con fuentes locales y autoridades competentes."
+    )
+
+
+def layout(title, body):
+    return f"""<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>{esc(title)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {{
+  --verde-oscuro:#0f3023; --verde:#1f6f43; --verde-suave:#e9f5ee;
+  --gris:#f4f6f7; --texto:#142026; --alerta:#dc2626; --fuego:#f97316; --azul:#2563eb;
+}}
+* {{ box-sizing:border-box; }}
+body {{ margin:0; font-family:Inter,Arial,sans-serif; background:var(--gris); color:var(--texto); }}
+header {{ background:linear-gradient(135deg,#0f3023,#1f6f43); color:white; padding:24px 32px 20px; }}
+header h1 {{ margin:0; font-size:30px; letter-spacing:-0.5px; }}
+header p {{ margin:6px 0 0; opacity:.92; }}
+nav {{ background:#184a34; padding:12px 32px; display:flex; gap:18px; flex-wrap:wrap; }}
+nav a {{ color:white; text-decoration:none; font-weight:700; }}
+main {{ padding:26px 32px; }}
+.hero {{ background:white; border-radius:18px; padding:26px; margin-bottom:22px; box-shadow:0 8px 30px rgba(0,0,0,.08); display:grid; grid-template-columns:1.5fr 1fr; gap:22px; align-items:center; }}
+.hero h2 {{ margin:0 0 10px; font-size:30px; }}
+.hero p {{ font-size:17px; line-height:1.45; }}
+.grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; }}
+.card {{ background:white; border-radius:16px; padding:20px; margin-bottom:18px; box-shadow:0 4px 18px rgba(0,0,0,.07); }}
+.metric-label {{ color:#52616a; font-weight:700; font-size:14px; }}
+.metric {{ font-size:36px; font-weight:900; margin-top:6px; }}
+.button,button {{ background:var(--verde); color:white; border:0; border-radius:12px; padding:12px 18px; font-weight:800; cursor:pointer; text-decoration:none; display:inline-block; font-size:15px; }}
+.button.secondary,button.secondary {{ background:#64748b; }}
+.button.danger,button.danger {{ background:#991b1b; }}
+.button.light {{ background:var(--verde-suave); color:#14532d; }}
+table {{ border-collapse:collapse; width:100%; background:white; }}
+th,td {{ border-bottom:1px solid #e5e7eb; text-align:left; padding:10px; font-size:13px; }}
+th {{ background:#eef5f0; }}
+label {{ display:block; margin-top:12px; font-weight:800; }}
+input,select {{ width:100%; padding:11px; margin-top:5px; border:1px solid #cbd5e1; border-radius:10px; font-size:14px; }}
+.form-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }}
+.badge {{ padding:5px 10px; border-radius:999px; font-weight:900; font-size:12px; }}
+.CRITICO {{ background:#fee2e2; color:#991b1b; }}
+.ATENCION {{ background:#fef3c7; color:#92400e; }}
+.INFORMATIVO {{ background:#dbeafe; color:#1e40af; }}
+.notice {{ background:#fff7ed; border-left:5px solid var(--fuego); padding:14px; border-radius:12px; margin-bottom:16px; }}
+.ok {{ background:#ecfdf5; border-left:5px solid var(--verde); padding:14px; border-radius:12px; }}
+.geo-help {{ background:#ecfeff; border-left:5px solid #0891b2; padding:12px; border-radius:12px; margin:12px 0; }}
+.alert-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:16px; }}
+.alert-card {{ border-radius:18px; padding:18px; background:white; box-shadow:0 6px 24px rgba(0,0,0,.08); border-left:8px solid #2563eb; }}
+.alert-card.CRITICO {{ border-left-color:#991b1b; }}
+.alert-card.ATENCION {{ border-left-color:#d97706; }}
+.alert-card.INFORMATIVO {{ border-left-color:#2563eb; }}
+.alert-title {{ display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:12px; }}
+.alert-title h3 {{ margin:0; font-size:21px; }}
+.alert-meta {{ display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; margin:12px 0; font-size:14px; }}
+.alert-meta div {{ background:#f8fafc; padding:9px; border-radius:10px; }}
+.message-box {{ background:#f8fafc; border:1px solid #dbe3ea; border-radius:12px; padding:12px; margin-top:12px; font-size:13px; line-height:1.45; }}
+.copy-button {{ background:#0f766e; padding:9px 12px; font-size:13px; margin-top:8px; }}
+.user-grid,.zone-summary {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }}
+.user-card,.zone-card {{ background:white; border-radius:16px; padding:18px; box-shadow:0 5px 20px rgba(0,0,0,.07); border-left:6px solid var(--verde); }}
+.report-header {{ display:flex; justify-content:space-between; gap:20px; align-items:flex-start; border-bottom:3px solid #14532d; padding-bottom:16px; margin-bottom:18px; }}
+.report-meta {{ background:#f8fafc; padding:14px; border-radius:12px; min-width:260px; font-size:13px; }}
+.report-kpis {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin:16px 0; }}
+.report-kpi {{ background:#f8fafc; border:1px solid #e5e7eb; border-radius:14px; padding:14px; }}
+.report-kpi strong {{ font-size:28px; display:block; }}
+.print-actions,.quick-actions {{ display:flex; gap:10px; flex-wrap:wrap; margin:14px 0; }}
+pre {{ white-space:pre-wrap; background:#111827; color:#e5e7eb; padding:14px; border-radius:8px; overflow:auto; }}
+@media(max-width:900px) {{ .hero,.form-grid {{ grid-template-columns:1fr; }} main {{ padding:18px; }} header,nav {{ padding-left:18px; padding-right:18px; }} }}
+@media print {{ header, nav, .print-actions {{ display:none !important; }} body {{ background:white; }} main {{ padding:0; }} .card {{ box-shadow:none; border:0; padding:0; }} }}
+</style>
+</head>
+<body>
+<header><h1>CampoSeguro</h1><p>Alerta temprana informativa de focos de calor para zonas registradas</p></header>
+<nav>
+<a href="/">Inicio</a>
+<a href="/mapa">Mapa</a>
+<a href="/resumen">Resumen</a>
+<a href="/reporte">Reporte</a>
+<a href="/alertas">Alertas</a>
+<a href="/focos">Focos</a>
+<a href="/zonas">Zonas</a>
+<a href="/usuarios">Usuarios</a>
+<a href="/correos">Correos</a>
+<a href="/configuracion">Configuración</a>
+</nav>
+<main>{body}</main>
+<script>
+function copiarTexto(id) {{
+  const el = document.getElementById(id);
+  if (!el) return;
+  const text = el.innerText || el.textContent;
+  navigator.clipboard.writeText(text).then(() => {{ alert("Mensaje copiado."); }}).catch(() => {{
+    const area = document.createElement("textarea");
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    document.body.removeChild(area);
+    alert("Mensaje copiado.");
+  }});
+}}
+function usarUbicacionActual() {{
+  if (!navigator.geolocation) {{
+    alert("Este navegador no permite obtener ubicación.");
+    return;
+  }}
+  const btn = document.getElementById("geo-btn");
+  if (btn) btn.innerText = "Buscando ubicación...";
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {{
+      const lat = pos.coords.latitude.toFixed(7);
+      const lon = pos.coords.longitude.toFixed(7);
+      const latInput = document.querySelector("input[name='latitud']");
+      const lonInput = document.querySelector("input[name='longitud']");
+      if (latInput) latInput.value = lat;
+      if (lonInput) lonInput.value = lon;
+      if (btn) btn.innerText = "Usar mi ubicación actual";
+      alert("Ubicación cargada: " + lat + ", " + lon);
+    }},
+    () => {{
+      if (btn) btn.innerText = "Usar mi ubicación actual";
+      alert("No se pudo obtener la ubicación. Revisa permisos del navegador.");
+    }},
+    {{ enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }}
+  );
+}}
+</script>
+</body>
+</html>"""
+
+
+def error_page(exc):
+    return HTMLResponse(layout("Error", f"<div class='card'><h2>Error</h2><pre>{esc(traceback.format_exc())}</pre></div>"), status_code=500)
+
+
+@app.on_event("startup")
+def startup():
+    init_db()
+    seed_demo_data()
+
+
+def stats():
+    conn = get_conn()
+    data = {
+        "usuarios": conn.execute("SELECT COUNT(*) FROM usuarios WHERE activo=1").fetchone()[0],
+        "zonas": conn.execute("SELECT COUNT(*) FROM zonas WHERE activa=1").fetchone()[0],
+        "focos": conn.execute("SELECT COUNT(*) FROM focos").fetchone()[0],
+        "alertas": conn.execute("SELECT COUNT(*) FROM alertas").fetchone()[0],
+        "criticas": conn.execute("SELECT COUNT(*) FROM alertas WHERE nivel='CRITICO'").fetchone()[0],
+        "atencion": conn.execute("SELECT COUNT(*) FROM alertas WHERE nivel='ATENCION'").fetchone()[0],
+        "informativas": conn.execute("SELECT COUNT(*) FROM alertas WHERE nivel='INFORMATIVO'").fetchone()[0],
+    }
+    conn.close()
+    return data
+
+
+@app.get("/", response_class=HTMLResponse)
+def inicio():
+    try:
+        s = stats()
+        key_status = "Configurada" if FIRMS_MAP_KEY and FIRMS_MAP_KEY != "coloca_aqui_tu_map_key" else "Falta configurar"
+        body = f"""
+        <section class="hero">
+          <div>
+            <h2>Monitoreo de fuego cercano</h2>
+            <p>Registra usuarios y zonas de interés. Luego actualiza el monitoreo para detectar focos de calor cercanos.</p>
+            <form method="post" action="/actualizar" style="display:inline-block;"><button type="submit">Actualizar monitoreo</button></form>
+            <a class="button light" href="/mapa">Ver mapa</a>
+            <div class="quick-actions">
+              <a class="button light" href="/usuarios">Usuarios</a>
+              <a class="button light" href="/zonas">Zonas</a>
+              <a class="button light" href="/reporte">Reporte operativo</a>
+              <a class="button light" href="/correos">Correos</a>
+            </div>
+          </div>
+          <div class="ok">
+            <strong>Estado del sistema</strong><br>
+            Llave FIRMS: {esc(key_status)}<br>
+            Área: Santa Cruz<br>
+            Rango: últimos {esc(FIRMS_DAY_RANGE)} día(s)
+          </div>
+        </section>
+
+        <section class="grid">
+          <div class="card"><div class="metric-label">Usuarios activos</div><div class="metric">{s['usuarios']}</div></div>
+          <div class="card"><div class="metric-label">Zonas activas</div><div class="metric">{s['zonas']}</div></div>
+          <div class="card"><div class="metric-label">Focos FIRMS</div><div class="metric">{s['focos']}</div></div>
+          <div class="card"><div class="metric-label">Alertas</div><div class="metric">{s['alertas']}</div></div>
+          <div class="card"><div class="metric-label">Críticas</div><div class="metric">{s['criticas']}</div></div>
+        </section>
+
+        <div class="card">
+          <h2>Distribución de alertas</h2>
+          <p>
+            <span class="badge CRITICO">Críticas: {s['criticas']}</span>
+            <span class="badge ATENCION">Atención: {s['atencion']}</span>
+            <span class="badge INFORMATIVO">Informativas: {s['informativas']}</span>
+          </p>
+          <p class="notice">CampoSeguro es informativo. No reemplaza verificación en campo ni sistemas oficiales.</p>
+        </div>
+        """
+        return layout("Inicio", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.post("/actualizar", response_class=HTMLResponse)
+def actualizar():
+    try:
+        r = run_monitoring()
+        nuevos_correos = preparar_correos_pendientes()
+        detail = ""
+        rows = ""
+        for rep in r["reports"]:
+            if rep["error"] or rep["message"]:
+                rows += f"<tr><td>{esc(rep['source'])}</td><td>{esc(rep['error'] or rep['message'])}</td></tr>"
+        if rows:
+            detail = f"<div class='card'><h3>Mensajes técnicos</h3><table><tr><th>Fuente</th><th>Mensaje</th></tr>{rows}</table></div>"
+
+        body = f"""
+        <div class="card">
+          <h2>Monitoreo actualizado</h2>
+          <p><strong>Focos descargados:</strong> {esc(r['focos_descargados'])}</p>
+          <p><strong>Focos nuevos guardados:</strong> {esc(r['focos_nuevos_guardados'])}</p>
+          <p><strong>Alertas totales recalculadas:</strong> {esc(r['alertas_totales'])}</p>
+          <p><strong>Correos preparados:</strong> {esc(nuevos_correos)}</p>
+          <p><strong>Fecha UTC:</strong> {esc(r['fecha_utc'])}</p>
+          <p><a class="button" href="/mapa">Ver mapa</a> <a class="button light" href="/alertas">Ver alertas</a> <a class="button light" href="/correos">Ver correos</a></p>
+        </div>{detail}
+        """
+        return layout("Resultado", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.post("/limpiar")
+def limpiar():
+    clear_data()
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/mapa", response_class=HTMLResponse)
+def mapa():
+    try:
+        conn = get_conn()
+        zonas = rows_to_dicts(conn.execute("""
+            SELECT z.*, u.nombre AS usuario_nombre
+            FROM zonas z LEFT JOIN usuarios u ON u.id=z.usuario_id
+            WHERE z.activa=1
+        """).fetchall())
+        focos = rows_to_dicts(conn.execute("SELECT * FROM focos ORDER BY acq_date DESC, acq_time DESC LIMIT 5000").fetchall())
+        alertas = rows_to_dicts(conn.execute("""
+            SELECT a.*, z.nombre_zona, f.latitude, f.longitude, f.acq_date, f.acq_time, f.fuente
+            FROM alertas a JOIN zonas z ON z.id=a.zona_id JOIN focos f ON f.id=a.foco_id
+            ORDER BY a.creada_utc DESC LIMIT 1000
+        """).fetchall())
+        conn.close()
+
+        body = f"""
+        <style>
+        main {{ padding:0; }}
+        #map {{ height:calc(100vh - 126px); width:100%; }}
+        .panel {{ position:absolute; z-index:1000; background:white; padding:14px 16px; top:150px; left:16px; border-radius:16px; box-shadow:0 8px 28px rgba(0,0,0,.2); max-width:360px; }}
+        .legend-dot {{ display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; }}
+        </style>
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <div class="panel">
+          <strong>CampoSeguro</strong><br>
+          Zonas: {len(zonas)}<br>Focos: {len(focos)}<br>Alertas: {len(alertas)}<hr>
+          <span class="legend-dot" style="background:#f97316"></span>Foco MODIS<br>
+          <span class="legend-dot" style="background:#dc2626"></span>Foco VIIRS<br>
+          <span class="legend-dot" style="background:#7f1d1d"></span>Alerta
+        </div>
+        <div id="map"></div>
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <script>
+        const zonas = {json.dumps(zonas)};
+        const focos = {json.dumps(focos)};
+        const alertas = {json.dumps(alertas)};
+        const map = L.map('map').setView([-17.8, -61.5], 7);
+        L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{ maxZoom:19, attribution:'&copy; OpenStreetMap' }}).addTo(map);
+
+        zonas.forEach(z => {{
+          L.circle([z.latitud, z.longitud], {{ radius:z.radio_km*1000, color:'#2563eb', weight:3, fillOpacity:0.035 }})
+            .addTo(map).bindPopup(`<b>Zona:</b> ${{z.nombre_zona}}<br><b>Usuario:</b> ${{z.usuario_nombre || 'Sin usuario'}}<br><b>Radio:</b> ${{z.radio_km}} km`);
+          L.marker([z.latitud, z.longitud]).addTo(map).bindPopup(`<b>Zona:</b> ${{z.nombre_zona}}`);
+        }});
+
+        focos.forEach(f => {{
+          const color = (f.fuente || '').includes('VIIRS') ? '#dc2626' : '#f97316';
+          L.circleMarker([f.latitude, f.longitude], {{ radius:5, color:color, fillColor:color, fillOpacity:0.82, weight:1 }})
+            .addTo(map).bindPopup(`<b>Foco de calor</b><br>${{f.fuente}}<br>${{f.acq_date}} ${{f.acq_time}}<br>FRP: ${{f.frp || ''}}`);
+        }});
+
+        alertas.forEach(a => {{
+          L.circleMarker([a.latitude, a.longitude], {{ radius:10, color:'#7f1d1d', fillColor:'#7f1d1d', fillOpacity:0.92, weight:2 }})
+            .addTo(map).bindPopup(`<b>ALERTA ${{a.nivel}}</b><br>${{a.nombre_zona}}<br>Distancia: ${{a.distancia_km}} km`);
+        }});
+        </script>
+        """
+        return layout("Mapa", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.get("/usuarios", response_class=HTMLResponse)
+def usuarios():
+    try:
+        conn = get_conn()
+        rows_db = conn.execute("""
+            SELECT u.*, COUNT(z.id) AS total_zonas
+            FROM usuarios u LEFT JOIN zonas z ON z.usuario_id=u.id
+            GROUP BY u.id ORDER BY u.activo DESC, u.nombre
+        """).fetchall()
+        conn.close()
+
+        cards = ""
+        for u in rows_db:
+            estado = "Activo" if u["activo"] else "Inactivo"
+            cards += f"""
+            <div class="user-card">
+              <h3>{esc(u['nombre'])}</h3>
+              <p><strong>Tipo:</strong> {esc(u['tipo_usuario'] or '')}</p>
+              <p><strong>Organización:</strong> {esc(u['organizacion'] or '')}</p>
+              <p><strong>Correo:</strong> {esc(u['email'] or '')}</p>
+              <p><strong>Teléfono:</strong> {esc(u['telefono'] or '')}</p>
+              <p><strong>Zonas asociadas:</strong> {esc(u['total_zonas'])}</p>
+              <p><strong>Estado:</strong> {esc(estado)}</p>
+              <p><a class="button light" href="/usuarios/{u['id']}/editar">Editar usuario</a></p>
+            </div>
+            """
+        if not cards:
+            cards = "<p>No hay usuarios registrados.</p>"
+
+        body = f"""
+        <div class="card">
+          <h2>Usuarios y responsables</h2>
+          <p>Registra personas, responsables de predios, comunidades o instituciones.</p>
+          <p><a class="button" href="/usuarios/nuevo">Nuevo usuario</a></p>
+        </div>
+        <div class="user-grid">{cards}</div>
+        """
+        return layout("Usuarios", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.get("/usuarios/nuevo", response_class=HTMLResponse)
+def usuario_nuevo_form():
+    body = """
+    <div class="card">
+      <h2>Nuevo usuario</h2>
+      <form method="post" action="/usuarios/nuevo">
+        <div class="form-grid">
+          <div><label>Nombre</label><input name="nombre" required placeholder="Ej. Juan Pérez"></div>
+          <div><label>Teléfono / WhatsApp</label><input name="telefono" placeholder="+591..."></div>
+          <div><label>Correo</label><input name="email" type="email" placeholder="correo@ejemplo.com"></div>
+          <div><label>Organización</label><input name="organizacion" placeholder="Predio, comunidad, municipio..."></div>
+          <div><label>Tipo de usuario</label><select name="tipo_usuario"><option>Propietario</option><option>Comunidad</option><option>Municipal</option><option>Institucional</option><option>Operador</option><option>Piloto</option></select></div>
+        </div>
+        <p><button type="submit">Guardar usuario</button></p>
+      </form>
+    </div>
+    """
+    return layout("Nuevo usuario", body)
+
+
+@app.post("/usuarios/nuevo")
+def usuario_nuevo(nombre: str = Form(...), telefono: str = Form(""), email: str = Form(""), organizacion: str = Form(""), tipo_usuario: str = Form("Propietario")):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO usuarios (nombre, email, telefono, organizacion, tipo_usuario, activo, creado_utc)
+        VALUES (?, ?, ?, ?, ?, 1, ?)
+    """, (nombre, email, telefono, organizacion, tipo_usuario, datetime.now(timezone.utc).isoformat()))
+    conn.commit()
+    conn.close()
+    return RedirectResponse("/usuarios", status_code=303)
+
+
+@app.get("/usuarios/{usuario_id}/editar", response_class=HTMLResponse)
+def usuario_editar_form(usuario_id: int):
+    try:
+        conn = get_conn()
+        u = conn.execute("SELECT * FROM usuarios WHERE id=?", (usuario_id,)).fetchone()
+        zonas_user = conn.execute("SELECT * FROM zonas WHERE usuario_id=? ORDER BY nombre_zona", (usuario_id,)).fetchall()
+        conn.close()
+        if not u:
+            return layout("Usuario no encontrado", "<div class='card'><h2>Usuario no encontrado</h2></div>")
+
+        zonas_rows = ""
+        for z in zonas_user:
+            zonas_rows += f"<tr><td>{esc(z['nombre_zona'])}</td><td>{esc(z['municipio'])}</td><td>{esc(z['radio_km'])} km</td><td><a href='/zonas/{z['id']}/editar'>Editar zona</a></td></tr>"
+        if not zonas_rows:
+            zonas_rows = "<tr><td colspan='4'>Este usuario aún no tiene zonas asociadas.</td></tr>"
+
+        body = f"""
+        <div class="card">
+          <h2>Editar usuario</h2>
+          <form method="post" action="/usuarios/{esc(usuario_id)}/editar">
+            <div class="form-grid">
+              <div><label>Nombre</label><input name="nombre" value="{esc(u['nombre'])}" required></div>
+              <div><label>Teléfono / WhatsApp</label><input name="telefono" value="{esc(u['telefono'] or '')}"></div>
+              <div><label>Correo</label><input name="email" type="email" value="{esc(u['email'] or '')}"></div>
+              <div><label>Organización</label><input name="organizacion" value="{esc(u['organizacion'] or '')}"></div>
+              <div><label>Tipo</label><input name="tipo_usuario" value="{esc(u['tipo_usuario'] or '')}"></div>
+              <div><label>Estado</label><select name="activo"><option value="1" {"selected" if u["activo"] else ""}>Activo</option><option value="0" {"" if u["activo"] else "selected"}>Inactivo</option></select></div>
+            </div>
+            <p><button type="submit">Guardar usuario</button> <a class="button light" href="/usuarios">Volver</a></p>
+          </form>
+        </div>
+        <div class="card">
+          <h2>Zonas asociadas</h2>
+          <table><thead><tr><th>Zona</th><th>Municipio</th><th>Radio</th><th>Acción</th></tr></thead><tbody>{zonas_rows}</tbody></table>
+          <p><a class="button" href="/zonas/nueva">Crear nueva zona</a></p>
+        </div>
+        """
+        return layout("Editar usuario", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.post("/usuarios/{usuario_id}/editar")
+def usuario_editar(usuario_id: int, nombre: str = Form(...), telefono: str = Form(""), email: str = Form(""), organizacion: str = Form(""), tipo_usuario: str = Form(""), activo: int = Form(1)):
+    conn = get_conn()
+    conn.execute("""
+        UPDATE usuarios SET nombre=?, telefono=?, email=?, organizacion=?, tipo_usuario=?, activo=? WHERE id=?
+    """, (nombre, telefono, email, organizacion, tipo_usuario, activo, usuario_id))
+    conn.commit()
+    conn.close()
+    return RedirectResponse("/usuarios", status_code=303)
+
+
+@app.get("/zonas", response_class=HTMLResponse)
+def zonas():
+    try:
+        conn = get_conn()
+        rows_db = conn.execute("""
+            SELECT z.*, u.nombre AS usuario_nombre, u.telefono AS usuario_telefono, u.email AS usuario_email
+            FROM zonas z LEFT JOIN usuarios u ON u.id=z.usuario_id
+            ORDER BY z.id
+        """).fetchall()
+        conn.close()
+        rows = ""
+        for z in rows_db:
+            estado = "Activa" if z["activa"] else "Inactiva"
+            usuario = z["usuario_nombre"] or "Sin usuario"
+            rows += f"""
+            <tr>
+              <td>{esc(z['nombre_zona'])}</td><td>{esc(usuario)}</td><td>{esc(z['tipo_zona'])}</td><td>{esc(z['municipio'])}</td>
+              <td>{esc(z['latitud'])}, {esc(z['longitud'])}</td><td><strong>{esc(z['radio_km'])} km</strong></td><td>{esc(estado)}</td>
+              <td><a class="button light" href="/zonas/{z['id']}/editar">Editar</a></td>
+            </tr>"""
+        body = f"""
+        <div class="card">
+          <h2>Zonas registradas</h2>
+          <p>Cada zona puede estar asociada a un usuario o responsable.</p>
+          <p><a class="button" href="/zonas/nueva">Nueva zona</a> <a class="button light" href="/usuarios/nuevo">Nuevo usuario</a>
+          <form method="post" action="/recalcular-alertas" style="display:inline-block;"><button class="secondary" type="submit">Recalcular alertas</button></form></p>
+          <table><thead><tr><th>Zona</th><th>Usuario</th><th>Tipo</th><th>Municipio</th><th>Coordenadas</th><th>Radio</th><th>Estado</th><th>Acción</th></tr></thead><tbody>{rows}</tbody></table>
+        </div>
+        <div class="geo-help">En celular, al crear o editar una zona puedes tocar “Usar mi ubicación actual”.</div>
+        """
+        return layout("Zonas", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+def user_options_html(selected_id=None):
+    conn = get_conn()
+    usuarios = conn.execute("SELECT * FROM usuarios WHERE activo=1 ORDER BY nombre").fetchall()
+    conn.close()
+    options = '<option value="">Sin usuario asignado</option>'
+    for u in usuarios:
+        sel = "selected" if selected_id == u["id"] else ""
+        options += f'<option value="{u["id"]}" {sel}>{esc(u["nombre"])} — {esc(u["telefono"] or u["email"] or "")}</option>'
+    return options
+
+
+@app.get("/zonas/nueva", response_class=HTMLResponse)
+def zona_form():
+    options = user_options_html()
+    body = f"""
+    <div class="card">
+      <h2>Nueva zona</h2>
+      <div class="geo-help">Si estás en el lugar, presiona <strong>Usar mi ubicación actual</strong> para llenar latitud y longitud.</div>
+      <form method="post" action="/zonas/nueva">
+        <div class="form-grid">
+          <div><label>Usuario responsable</label><select name="usuario_id">{options}</select></div>
+          <div><label>Nombre de la zona</label><input name="nombre_zona" required placeholder="Ej. Predio San José"></div>
+          <div><label>Correo de contacto</label><input name="contacto_email" type="email" placeholder="correo@ejemplo.com"></div>
+          <div><label>Tipo</label><select name="tipo_zona"><option>Predio</option><option>Comunidad</option><option>Municipio</option><option>Área protegida</option><option>Proyecto</option><option>Ubicación actual</option></select></div>
+          <div><label>Departamento</label><input name="departamento" value="Santa Cruz"></div>
+          <div><label>Municipio</label><input name="municipio" placeholder="Ej. Roboré"></div>
+          <div><label>Latitud</label><input name="latitud" type="number" step="any" required placeholder="-17.0000000"></div>
+          <div><label>Longitud</label><input name="longitud" type="number" step="any" required placeholder="-60.0000000"></div>
+          <div><label>Radio km</label><select name="radio_km"><option value="5">5 km</option><option value="10">10 km</option><option value="25">25 km</option><option value="50" selected>50 km</option><option value="100">100 km</option></select></div>
+        </div>
+        <p><button id="geo-btn" type="button" onclick="usarUbicacionActual()">Usar mi ubicación actual</button> <button type="submit">Guardar zona</button></p>
+      </form>
+    </div>
+    """
+    return layout("Nueva zona", body)
+
+
+@app.post("/zonas/nueva")
+def zona_nueva(nombre_zona: str = Form(...), contacto_email: str = Form(""), tipo_zona: str = Form("Predio"), departamento: str = Form("Santa Cruz"), municipio: str = Form(""), latitud: float = Form(...), longitud: float = Form(...), radio_km: float = Form(50), usuario_id: str = Form("")):
+    uid = int(usuario_id) if str(usuario_id).strip() else None
+    if not contacto_email and uid:
+        conn_tmp = get_conn()
+        u = conn_tmp.execute("SELECT email FROM usuarios WHERE id=?", (uid,)).fetchone()
+        conn_tmp.close()
+        contacto_email = u["email"] if u and u["email"] else "sin-correo@camposeguro.local"
+    if not contacto_email:
+        contacto_email = "sin-correo@camposeguro.local"
+
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO zonas (usuario_id, nombre_zona, contacto_email, tipo_zona, departamento, municipio, latitud, longitud, radio_km, activa, creada_utc)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+    """, (uid, nombre_zona, contacto_email, tipo_zona, departamento, municipio, latitud, longitud, radio_km, datetime.now(timezone.utc).isoformat()))
+    conn.commit()
+    conn.close()
+    return RedirectResponse("/zonas", status_code=303)
+
+
+@app.get("/zonas/{zona_id}/editar", response_class=HTMLResponse)
+def zona_editar_form(zona_id: int):
+    try:
+        conn = get_conn()
+        z = conn.execute("SELECT * FROM zonas WHERE id=?", (zona_id,)).fetchone()
+        conn.close()
+        if not z:
+            return layout("Zona no encontrada", "<div class='card'><h2>Zona no encontrada</h2></div>")
+
+        def selected(value):
+            return "selected" if float(z["radio_km"]) == float(value) else ""
+
+        options = user_options_html(z["usuario_id"])
+        body = f"""
+        <div class="card">
+          <h2>Editar zona</h2>
+          <div class="geo-help">Puedes reemplazar las coordenadas con la ubicación actual del teléfono.</div>
+          <form method="post" action="/zonas/{esc(zona_id)}/editar">
+            <div class="form-grid">
+              <div><label>Usuario responsable</label><select name="usuario_id">{options}</select></div>
+              <div><label>Nombre</label><input name="nombre_zona" value="{esc(z['nombre_zona'])}" required></div>
+              <div><label>Correo</label><input name="contacto_email" type="email" value="{esc(z['contacto_email'] or '')}"></div>
+              <div><label>Tipo</label><input name="tipo_zona" value="{esc(z['tipo_zona'] or '')}"></div>
+              <div><label>Municipio</label><input name="municipio" value="{esc(z['municipio'] or '')}"></div>
+              <div><label>Latitud</label><input name="latitud" type="number" step="any" value="{esc(z['latitud'])}" required></div>
+              <div><label>Longitud</label><input name="longitud" type="number" step="any" value="{esc(z['longitud'])}" required></div>
+              <div><label>Radio</label><select name="radio_km"><option value="5" {selected(5)}>5 km</option><option value="10" {selected(10)}>10 km</option><option value="25" {selected(25)}>25 km</option><option value="50" {selected(50)}>50 km</option><option value="100" {selected(100)}>100 km</option></select></div>
+              <div><label>Estado</label><select name="activa"><option value="1" {"selected" if z["activa"] else ""}>Activa</option><option value="0" {"" if z["activa"] else "selected"}>Inactiva</option></select></div>
+            </div>
+            <p><button id="geo-btn" type="button" onclick="usarUbicacionActual()">Usar mi ubicación actual</button> <button type="submit">Guardar y recalcular</button> <a class="button light" href="/zonas">Volver</a></p>
+          </form>
+        </div>
+        """
+        return layout("Editar zona", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.post("/zonas/{zona_id}/editar")
+def zona_editar(zona_id: int, nombre_zona: str = Form(...), contacto_email: str = Form(""), tipo_zona: str = Form("Predio"), municipio: str = Form(""), latitud: float = Form(...), longitud: float = Form(...), radio_km: float = Form(50), activa: int = Form(1), usuario_id: str = Form("")):
+    uid = int(usuario_id) if str(usuario_id).strip() else None
+    if not contacto_email and uid:
+        conn_tmp = get_conn()
+        u = conn_tmp.execute("SELECT email FROM usuarios WHERE id=?", (uid,)).fetchone()
+        conn_tmp.close()
+        contacto_email = u["email"] if u and u["email"] else "sin-correo@camposeguro.local"
+    if not contacto_email:
+        contacto_email = "sin-correo@camposeguro.local"
+
+    conn = get_conn()
+    conn.execute("""
+        UPDATE zonas SET usuario_id=?, nombre_zona=?, contacto_email=?, tipo_zona=?, municipio=?, latitud=?, longitud=?, radio_km=?, activa=? WHERE id=?
+    """, (uid, nombre_zona, contacto_email, tipo_zona, municipio, latitud, longitud, radio_km, activa, zona_id))
+    conn.commit()
+    conn.close()
+    recalcular_alertas_existentes()
+    return RedirectResponse("/zonas", status_code=303)
+
+
+@app.post("/recalcular-alertas")
+def recalcular_alertas():
+    recalcular_alertas_existentes()
+    return RedirectResponse("/alertas", status_code=303)
+
+
+@app.get("/alertas", response_class=HTMLResponse)
+def alertas():
+    try:
+        conn = get_conn()
+        rows_db = conn.execute("""
+            SELECT a.*, z.nombre_zona, z.municipio, u.nombre AS usuario_nombre, u.telefono AS usuario_telefono,
+                   f.latitude, f.longitude, f.acq_date, f.acq_time, f.fuente
+            FROM alertas a
+            JOIN zonas z ON z.id=a.zona_id
+            LEFT JOIN usuarios u ON u.id=z.usuario_id
+            JOIN focos f ON f.id=a.foco_id
+            ORDER BY CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END, a.distancia_km ASC
+            LIMIT 1000
+        """).fetchall()
+        conn.close()
+        if not rows_db:
+            return layout("Alertas", "<div class='card'><h2>Alertas</h2><p>No hay alertas registradas.</p></div>")
+
+        cards = ""
+        table_rows = ""
+        for idx, a in enumerate(rows_db, start=1):
+            rec = recomendacion_por_nivel(a["nivel"])
+            msg = mensaje_alerta(a)
+            cards += f"""
+            <div class="alert-card {esc(a['nivel'])}">
+              <div class="alert-title"><h3>{esc(a['nombre_zona'])}</h3><span class="badge {esc(a['nivel'])}">{esc(a['nivel'])}</span></div>
+              <div class="alert-meta">
+                <div><strong>Usuario</strong><br>{esc(a['usuario_nombre'] or 'Sin usuario')}</div>
+                <div><strong>Municipio</strong><br>{esc(a['municipio'])}</div>
+                <div><strong>Distancia</strong><br>{esc(a['distancia_km'])} km</div>
+                <div><strong>Fuente</strong><br>{esc(a['fuente'])}</div>
+                <div><strong>Fecha</strong><br>{esc(a['acq_date'])} {esc(a['acq_time'])}</div>
+                <div><strong>Teléfono</strong><br>{esc(a['usuario_telefono'] or '')}</div>
+              </div>
+              <p><strong>Recomendación:</strong> {esc(rec)}</p>
+              <div class="message-box" id="msg-{idx}">{esc(msg)}</div>
+              <button class="copy-button" type="button" onclick="copiarTexto('msg-{idx}')">Copiar mensaje</button>
+              <a class="button light" target="_blank" href="https://www.google.com/maps?q={esc(a['latitude'])},{esc(a['longitude'])}">Abrir foco en mapa</a>
+            </div>
+            """
+            table_rows += f"<tr><td><span class='badge {esc(a['nivel'])}'>{esc(a['nivel'])}</span></td><td>{esc(a['nombre_zona'])}</td><td>{esc(a['usuario_nombre'] or '')}</td><td>{esc(a['distancia_km'])} km</td><td>{esc(a['fuente'])}</td><td>{esc(a['acq_date'])} {esc(a['acq_time'])}</td></tr>"
+
+        body = f"""
+        <div class="card"><h2>Panel de alertas</h2><p>Alertas ordenadas por prioridad y distancia.</p></div>
+        <div class="alert-grid">{cards}</div>
+        <div class="card"><h2>Tabla técnica</h2><table><thead><tr><th>Nivel</th><th>Zona</th><th>Usuario</th><th>Distancia</th><th>Fuente</th><th>Fecha</th></tr></thead><tbody>{table_rows}</tbody></table></div>
+        """
+        return layout("Alertas", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.get("/focos", response_class=HTMLResponse)
+def focos():
+    try:
+        conn = get_conn()
+        rows_db = conn.execute("SELECT * FROM focos ORDER BY acq_date DESC, acq_time DESC LIMIT 1000").fetchall()
+        conn.close()
+        rows = ""
+        for f in rows_db:
+            rows += f"<tr><td>{esc(f['fuente'])}</td><td>{esc(f['latitude'])}</td><td>{esc(f['longitude'])}</td><td>{esc(f['acq_date'])}</td><td>{esc(f['acq_time'])}</td><td>{esc(f['satellite'])}</td><td>{esc(f['confidence'])}</td><td>{esc(f['frp'])}</td></tr>"
+        content = "<p>No hay focos guardados.</p>" if not rows else f"<table><thead><tr><th>Fuente</th><th>Lat</th><th>Lon</th><th>Fecha</th><th>Hora</th><th>Satélite</th><th>Confianza</th><th>FRP</th></tr></thead><tbody>{rows}</tbody></table>"
+        return layout("Focos", f"<div class='card'><h2>Focos FIRMS</h2>{content}</div>")
+    except Exception as exc:
+        return error_page(exc)
+
+
+def datos_resumen():
+    conn = get_conn()
+    general = conn.execute("""
+        SELECT COUNT(*) AS total_alertas,
+               SUM(CASE WHEN nivel='CRITICO' THEN 1 ELSE 0 END) AS criticas,
+               SUM(CASE WHEN nivel='ATENCION' THEN 1 ELSE 0 END) AS atencion,
+               SUM(CASE WHEN nivel='INFORMATIVO' THEN 1 ELSE 0 END) AS informativas,
+               MIN(distancia_km) AS distancia_minima
+        FROM alertas
+    """).fetchone()
+    total_focos = conn.execute("SELECT COUNT(*) FROM focos").fetchone()[0]
+    total_zonas = conn.execute("SELECT COUNT(*) FROM zonas WHERE activa=1").fetchone()[0]
+    por_zona = conn.execute("""
+        SELECT z.nombre_zona, z.municipio, u.nombre AS usuario_nombre,
+               COUNT(*) AS total_alertas, MIN(a.distancia_km) AS distancia_minima,
+               MAX(CASE WHEN a.nivel='CRITICO' THEN 3 WHEN a.nivel='ATENCION' THEN 2 ELSE 1 END) AS nivel_max_num,
+               MAX(f.acq_date || ' ' || f.acq_time) AS ultima_deteccion
+        FROM alertas a JOIN zonas z ON z.id=a.zona_id LEFT JOIN usuarios u ON u.id=z.usuario_id JOIN focos f ON f.id=a.foco_id
+        GROUP BY z.id ORDER BY total_alertas DESC, distancia_minima ASC
+    """).fetchall()
+    focos_fuente = conn.execute("SELECT fuente, COUNT(*) AS total, MAX(acq_date || ' ' || acq_time) AS ultima_deteccion FROM focos GROUP BY fuente ORDER BY total DESC").fetchall()
+    conn.close()
+    return general, total_focos, total_zonas, por_zona, focos_fuente
+
+
+@app.get("/resumen", response_class=HTMLResponse)
+def resumen():
+    try:
+        general, total_focos, total_zonas, por_zona, focos_fuente = datos_resumen()
+        nivel_map = {3: "CRITICO", 2: "ATENCION", 1: "INFORMATIVO"}
+        cards = ""
+        for z in por_zona:
+            nivel = nivel_map.get(z["nivel_max_num"], "INFORMATIVO")
+            cards += f"<div class='zone-card'><h3>{esc(z['nombre_zona'])}</h3><p><strong>Usuario:</strong> {esc(z['usuario_nombre'] or '')}</p><p><strong>Municipio:</strong> {esc(z['municipio'])}</p><p><strong>Alertas:</strong> {esc(z['total_alertas'])}</p><p><strong>Nivel máximo:</strong> <span class='badge {esc(nivel)}'>{esc(nivel)}</span></p><p><strong>Distancia mínima:</strong> {esc(round(z['distancia_minima'],2))} km</p><p><strong>Última detección:</strong> {esc(z['ultima_deteccion'])}</p></div>"
+        if not cards:
+            cards = "<p>No hay alertas para resumir.</p>"
+        fuente_rows = "".join([f"<tr><td>{esc(f['fuente'])}</td><td>{esc(f['total'])}</td><td>{esc(f['ultima_deteccion'])}</td></tr>" for f in focos_fuente])
+        body = f"""
+        <div class="card"><h2>Resumen ejecutivo</h2>
+          <div class="grid">
+            <div class="card"><div class="metric-label">Zonas activas</div><div class="metric">{esc(total_zonas)}</div></div>
+            <div class="card"><div class="metric-label">Focos FIRMS</div><div class="metric">{esc(total_focos)}</div></div>
+            <div class="card"><div class="metric-label">Alertas</div><div class="metric">{esc(general['total_alertas'] or 0)}</div></div>
+            <div class="card"><div class="metric-label">Críticas</div><div class="metric">{esc(general['criticas'] or 0)}</div></div>
+          </div>
+          <p><a class="button" href="/exportar/alertas.csv">Exportar alertas CSV</a> <a class="button light" href="/exportar/focos.csv">Exportar focos CSV</a></p>
+        </div>
+        <div class="card"><h2>Resumen por zona</h2><div class="zone-summary">{cards}</div></div>
+        <div class="card"><h2>Focos por fuente</h2><table><thead><tr><th>Fuente</th><th>Total</th><th>Última detección</th></tr></thead><tbody>{fuente_rows}</tbody></table></div>
+        """
+        return layout("Resumen", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+def csv_response(filename, headers, rows):
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(headers)
+    for row in rows:
+        writer.writerow([row.get(h, "") for h in headers])
+    output.seek(0)
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+@app.get("/exportar/alertas.csv")
+def exportar_alertas():
+    conn = get_conn()
+    rows = rows_to_dicts(conn.execute("""
+        SELECT a.nivel, z.nombre_zona, z.municipio, u.nombre AS usuario_nombre, u.telefono AS usuario_telefono,
+               a.distancia_km, f.fuente, f.latitude, f.longitude, f.acq_date, f.acq_time, f.satellite, f.confidence, f.frp
+        FROM alertas a JOIN zonas z ON z.id=a.zona_id LEFT JOIN usuarios u ON u.id=z.usuario_id JOIN focos f ON f.id=a.foco_id
+        ORDER BY a.creada_utc DESC
+    """).fetchall())
+    conn.close()
+    headers = ["nivel", "nombre_zona", "municipio", "usuario_nombre", "usuario_telefono", "distancia_km", "fuente", "latitude", "longitude", "acq_date", "acq_time", "satellite", "confidence", "frp"]
+    return csv_response("camposeguro_alertas.csv", headers, rows)
+
+
+@app.get("/exportar/focos.csv")
+def exportar_focos():
+    conn = get_conn()
+    rows = rows_to_dicts(conn.execute("SELECT fuente, latitude, longitude, acq_date, acq_time, satellite, instrument, confidence, frp, bright_ti4, daynight FROM focos ORDER BY acq_date DESC, acq_time DESC").fetchall())
+    conn.close()
+    headers = ["fuente", "latitude", "longitude", "acq_date", "acq_time", "satellite", "instrument", "confidence", "frp", "bright_ti4", "daynight"]
+    return csv_response("camposeguro_focos.csv", headers, rows)
+
+
+@app.get("/reporte", response_class=HTMLResponse)
+def reporte():
+    try:
+        general, total_focos, total_zonas, por_zona, focos_fuente = datos_resumen()
+        fecha_reporte = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        nivel_map = {3: "CRITICO", 2: "ATENCION", 1: "INFORMATIVO"}
+        zona_rows = ""
+        for z in por_zona:
+            nivel = nivel_map.get(z["nivel_max_num"], "INFORMATIVO")
+            zona_rows += f"<tr><td>{esc(z['nombre_zona'])}</td><td>{esc(z['usuario_nombre'] or '')}</td><td>{esc(z['municipio'])}</td><td>{esc(z['total_alertas'])}</td><td><span class='badge {esc(nivel)}'>{esc(nivel)}</span></td><td>{esc(round(z['distancia_minima'],2))} km</td><td>{esc(z['ultima_deteccion'])}</td></tr>"
+        if not zona_rows:
+            zona_rows = "<tr><td colspan='7'>Sin alertas.</td></tr>"
+
+        body = f"""
+        <div class="card">
+          <div class="report-header"><div><h2>Reporte operativo CampoSeguro</h2><p>Monitoreo informativo de focos de calor cercanos a zonas registradas.</p></div><div class="report-meta"><strong>Fecha UTC</strong><br>{esc(fecha_reporte)}<br><br><strong>Fuente</strong><br>NASA FIRMS Area API</div></div>
+          <div class="print-actions"><button onclick="window.print()">Imprimir / Guardar PDF</button><a class="button light" href="/exportar/alertas.csv">Exportar alertas CSV</a><a class="button light" href="/exportar/mensajes.txt">Descargar mensajes</a></div>
+          <div class="report-kpis"><div class="report-kpi"><span>Zonas activas</span><strong>{esc(total_zonas)}</strong></div><div class="report-kpi"><span>Focos FIRMS</span><strong>{esc(total_focos)}</strong></div><div class="report-kpi"><span>Alertas</span><strong>{esc(general['total_alertas'] or 0)}</strong></div><div class="report-kpi"><span>Críticas</span><strong>{esc(general['criticas'] or 0)}</strong></div></div>
+          <h3>Resumen por zona</h3>
+          <table><thead><tr><th>Zona</th><th>Usuario</th><th>Municipio</th><th>Alertas</th><th>Nivel máximo</th><th>Distancia mínima</th><th>Última detección</th></tr></thead><tbody>{zona_rows}</tbody></table>
+          <div class="notice">CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales de emergencia.</div>
+        </div>
+        """
+        return layout("Reporte", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.get("/exportar/mensajes.txt")
+def exportar_mensajes():
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT a.*, z.nombre_zona, z.municipio, f.acq_date, f.acq_time, f.fuente
+        FROM alertas a JOIN zonas z ON z.id=a.zona_id JOIN focos f ON f.id=a.foco_id
+        ORDER BY CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END, a.distancia_km ASC
+    """).fetchall()
+    conn.close()
+    parts = []
+    for idx, a in enumerate(rows, start=1):
+        parts.append(f"ALERTA {idx} - {a['nombre_zona']}\n{mensaje_alerta(a)}\n")
+    text = "\n".join(parts) if parts else "No hay mensajes de alerta generados."
+    return StreamingResponse(iter([text]), media_type="text/plain", headers={"Content-Disposition": "attachment; filename=camposeguro_mensajes_alerta.txt"})
+
+
+
+
+@app.get("/correos", response_class=HTMLResponse)
+def correos():
+    try:
+        stats_mail = estadisticas_correos()
+        rows_db = listar_correos()
+        smtp_estado = "Envío real activo" if smtp_config_ok() else "Modo seguro/local: genera archivos en output/outbox_email"
+        rows = ""
+        for c in rows_db:
+            rows += f"""
+            <tr>
+              <td>{esc(c['estado'])}</td><td>{esc(c['destinatario'])}</td><td>{esc(c['nombre_zona'])}</td><td>{esc(c['nivel'])}</td>
+              <td>{esc(c['creado_utc'])}</td><td>{esc(c['enviado_utc'] or '')}</td><td>{esc(c['error'] or '')}</td>
+            </tr>"""
+        if not rows:
+            rows = "<tr><td colspan='7'>No hay correos preparados todavía.</td></tr>"
+        body = f"""
+        <div class="card">
+          <h2>Correos de alerta</h2>
+          <p><strong>Estado:</strong> {esc(smtp_estado)}</p>
+          <div class="grid">
+            <div class="card"><div class="metric-label">Pendientes</div><div class="metric">{esc(stats_mail['pendientes'])}</div></div>
+            <div class="card"><div class="metric-label">Enviados</div><div class="metric">{esc(stats_mail['enviados'])}</div></div>
+            <div class="card"><div class="metric-label">Outbox local</div><div class="metric">{esc(stats_mail['outbox'])}</div></div>
+            <div class="card"><div class="metric-label">Errores</div><div class="metric">{esc(stats_mail['errores'])}</div></div>
+          </div>
+          <form method="post" action="/correos/preparar" style="display:inline-block;"><button type="submit">Preparar correos</button></form>
+          <form method="post" action="/correos/enviar" style="display:inline-block;"><button type="submit">Procesar correos pendientes</button></form>
+        </div>
+        <div class="notice">Si EMAIL_ENABLED=false, CampoSeguro no envía correos reales: genera archivos TXT en <strong>output/outbox_email</strong>.</div>
+        <div class="card"><h2>Historial de correos</h2><table><thead><tr><th>Estado</th><th>Destinatario</th><th>Zona</th><th>Nivel</th><th>Creado</th><th>Procesado</th><th>Mensaje/Error</th></tr></thead><tbody>{rows}</tbody></table></div>
+        """
+        return layout("Correos", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.post("/correos/preparar", response_class=HTMLResponse)
+def correos_preparar():
+    try:
+        creados = preparar_correos_pendientes()
+        return layout("Correos preparados", f"<div class='card'><h2>Correos preparados</h2><p><strong>Nuevos correos:</strong> {esc(creados)}</p><p><a class='button' href='/correos'>Volver</a></p></div>")
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.post("/correos/enviar", response_class=HTMLResponse)
+def correos_enviar():
+    try:
+        r = procesar_correos_pendientes()
+        body = f"""
+        <div class="card"><h2>Correos procesados</h2>
+          <p><strong>Procesados:</strong> {esc(r['procesados'])}</p>
+          <p><strong>Enviados reales:</strong> {esc(r['enviados'])}</p>
+          <p><strong>Outbox local:</strong> {esc(r['outbox'])}</p>
+          <p><strong>Errores:</strong> {esc(r['errores'])}</p>
+          <p><strong>SMTP activo:</strong> {esc(r['smtp_activo'])}</p>
+          <p><a class="button" href="/correos">Volver</a></p>
+        </div>"""
+        return layout("Correos procesados", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.get("/configuracion", response_class=HTMLResponse)
+def configuracion():
+    key_status = "Configurada" if FIRMS_MAP_KEY and FIRMS_MAP_KEY != "coloca_aqui_tu_map_key" else "Falta configurar"
+    body = f"""
+    <div class="card">
+      <h2>Configuración actual</h2>
+      <p><strong>Llave FIRMS:</strong> {esc(key_status)}</p>
+      <p><strong>Área monitoreada:</strong> {esc(FIRMS_AREA_BBOX)}</p>
+      <p><strong>Rango de días:</strong> {esc(FIRMS_DAY_RANGE)}</p>
+      <p><strong>Fuentes:</strong> {esc(FIRMS_SOURCES)}</p>
+      <p><strong>Ubicación desde teléfono:</strong> disponible al crear o editar zonas.</p>
+      <p><strong>Correo:</strong> EMAIL_ENABLED controla si se envían correos reales o se generan archivos outbox.</p>
+      <p>Para cambiar FIRMS, edita el archivo <strong>.env</strong> y vuelve a abrir CampoSeguro.</p>
+    </div>
+    <div class="card">
+      <h2>Limpieza de datos</h2>
+      <p>Esto borra focos y alertas guardadas, pero mantiene usuarios y zonas.</p>
+      <form method="post" action="/limpiar"><button class="danger" type="submit">Limpiar focos y alertas</button></form>
+    </div>
+    """
+    return layout("Configuración", body)

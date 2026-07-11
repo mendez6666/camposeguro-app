@@ -1,0 +1,35 @@
+CAMPOSEGURO v1.7 - ALERTAS POR CORREO
+
+Nuevo:
+- Preparar correos por cada alerta.
+- Procesar correos pendientes.
+- Modo seguro/local: genera TXT en output/outbox_email.
+- Modo envío real por SMTP si EMAIL_ENABLED=true.
+- Historial de correos: pendiente, enviado, outbox o error.
+
+Puerto:
+http://127.0.0.1:8020
+
+PASOS:
+1. Cierra versiones anteriores.
+2. Descomprime esta carpeta.
+3. Ejecuta 1_INSTALAR.bat.
+4. En .env pega tu llave FIRMS o la URL completa.
+5. Para pruebas, deja EMAIL_ENABLED=false.
+6. Ejecuta 2_ABRIR_CAMPOSEGURO.bat.
+7. Presiona Actualizar monitoreo.
+8. Entra a Correos.
+9. Presiona Procesar correos pendientes.
+10. Revisa la carpeta output/outbox_email.
+
+PARA ENVÍO REAL:
+Configura en .env:
+EMAIL_ENABLED=true
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USE_TLS=true
+SMTP_USER=tu_correo@gmail.com
+SMTP_PASSWORD=tu_app_password
+SMTP_FROM=CampoSeguro <tu_correo@gmail.com>
+
+Nota: si usas Gmail, normalmente necesitas una contraseña de aplicación.

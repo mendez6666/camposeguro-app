@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: camposeguro-app
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: FIRMS_DAY_RANGE
+        value: "1"
+      - key: FIRMS_AREA_BBOX
+        value: "-64.9,-20.6,-57.0,-13.0"
+      - key: FIRMS_SOURCES
+        value: "MODIS_NRT,VIIRS_SNPP_NRT,VIIRS_NOAA20_NRT,VIIRS_NOAA21_NRT"
+      - key: EMAIL_ENABLED
+        value: "false"
