@@ -61,3 +61,10 @@ Cambios:
 - Botones de capas: solo alertas, zonas, focos, todo y limpiar focos.
 - Ruta técnica `/prueba-firms` se mantiene para diagnóstico, pero no aparece en el menú.
 - Ruta `/landing` agregada como página simple de presentación.
+## Versión 2.2 - Mapa con contexto de fuego
+
+Cambio principal:
+- El mapa abre con zonas + alertas + focos cercanos de contexto.
+- Los focos cercanos se calculan alrededor de cada zona monitoreada usando radio de zona + 60 km.
+- Esto permite ver de dónde puede venir la presión de fuego sin saturar con todos los focos de Santa Cruz.
+- Los 5000 focos generales siguen disponibles con el botón "Todos los focos".
