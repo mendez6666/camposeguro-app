@@ -24,4 +24,12 @@ Después de desplegar:
 1. Abrir /prueba-firms
 2. Probar Santa Cruz 5 días
 3. Probar Bolivia 5 días
-4. Si da filas, volver a Inicio y Actualizar monitoreo.
+4. Si da filas, volver a Inicio y Actualizar monitoreo.CAMPOSEGURO v2.0 - ALERTA TEMPRANA 24H
+
+La consulta técnica puede descargar hasta 5 días para evitar que Render quede en 0.
+Pero las alertas se generan únicamente con focos de las últimas 24 horas.
+
+Variables recomendadas en Render:
+FIRMS_QUERY_DAYS=5
+ALERT_WINDOW_HOURS=24
+FIRMS_DAY_RANGE=1

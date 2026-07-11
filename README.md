@@ -22,6 +22,8 @@ uvicorn app:app --host 0.0.0.0 --port $PORT
 FIRMS_MAP_KEY=tu_llave_firms
 FIRMS_AREA_BBOX=-64.9,-20.6,-57.0,-13.0
 FIRMS_DAY_RANGE=1
+FIRMS_QUERY_DAYS=5
+ALERT_WINDOW_HOURS=24
 FIRMS_SOURCES=MODIS_NRT,VIIRS_SNPP_NRT,VIIRS_NOAA20_NRT,VIIRS_NOAA21_NRT
 EMAIL_ENABLED=false
 ```
@@ -43,3 +45,10 @@ Esta versión usa una estrategia automática FIRMS:
 3. No consulta toda Sudamérica para evitar ruido y exceso de datos.
 
 La API regional sigue siendo `South_America`, pero el BBOX operativo es Santa Cruz/Bolivia.
+## Versión 2.0
+
+La alerta temprana se mantiene así:
+
+- `FIRMS_QUERY_DAYS=5`: consulta técnica de respaldo para evitar que Render/API devuelva vacío por desfase o ventana corta.
+- `ALERT_WINDOW_HOURS=24`: solo los focos de las últimas 24 horas generan alertas.
+- Estrategia automática: Santa Cruz → Bolivia.

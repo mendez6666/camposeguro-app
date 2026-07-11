@@ -8,6 +8,10 @@ services:
     envVars:
       - key: FIRMS_DAY_RANGE
         value: "1"
+      - key: FIRMS_QUERY_DAYS
+        value: "5"
+      - key: ALERT_WINDOW_HOURS
+        value: "24"
       - key: FIRMS_AREA_BBOX
         value: "-64.9,-20.6,-57.0,-13.0"
       - key: FIRMS_SOURCES

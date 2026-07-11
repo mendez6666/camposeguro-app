@@ -31,7 +31,11 @@ def normalize_map_key(raw: str) -> str:
 
 FIRMS_MAP_KEY = normalize_map_key(RAW_FIRMS_MAP_KEY)
 FIRMS_AREA_BBOX = os.getenv("FIRMS_AREA_BBOX", "-64.9,-20.6,-57.0,-13.0").strip()
+# FIRMS_DAY_RANGE se mantiene por compatibilidad.
+# Para Render usamos consulta de respaldo con 5 días y luego filtramos alertas a 24h.
 FIRMS_DAY_RANGE = int(os.getenv("FIRMS_DAY_RANGE", "1"))
+FIRMS_QUERY_DAYS = int(os.getenv("FIRMS_QUERY_DAYS", "5"))
+ALERT_WINDOW_HOURS = int(os.getenv("ALERT_WINDOW_HOURS", "24"))
 FIRMS_SOURCES = [
     x.strip() for x in os.getenv(
         "FIRMS_SOURCES",

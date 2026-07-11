@@ -1,7 +1,8 @@
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from firms_api import fetch_auto_scz_bolivia
 from db import get_conn
+from config import ALERT_WINDOW_HOURS
 
 
 def now_utc():
@@ -16,6 +17,35 @@ def haversine_km(lat1, lon1, lat2, lon2):
     dlambda = math.radians(float(lon2) - float(lon1))
     a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
     return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def parse_acq_datetime_utc(acq_date, acq_time):
+    """
+    FIRMS entrega acq_date y acq_time en UTC.
+    acq_time puede venir como 20, 200, 0200, 1435, etc.
+    """
+    try:
+        t = str(acq_time or "").strip()
+        digits = "".join(ch for ch in t if ch.isdigit())
+        if not digits:
+            digits = "0000"
+        digits = digits.zfill(4)[-4:]
+        hh = int(digits[:2])
+        mm = int(digits[2:])
+        dt = datetime.strptime(str(acq_date), "%Y-%m-%d").replace(
+            hour=hh, minute=mm, second=0, microsecond=0, tzinfo=timezone.utc
+        )
+        return dt
+    except Exception:
+        return None
+
+
+def foco_en_ventana_alerta(foco, hours=None):
+    hours = int(hours or ALERT_WINDOW_HOURS)
+    dt = parse_acq_datetime_utc(foco["acq_date"], foco["acq_time"])
+    if not dt:
+        return False
+    return dt >= (datetime.now(timezone.utc) - timedelta(hours=hours))
 
 
 def nivel_alerta(distancia_km):
@@ -52,6 +82,11 @@ def insert_alerta(conn, zona, foco_id, distancia_km):
 
 
 def recalcular_alertas_existentes():
+    """
+    Recalcula alertas solamente con focos recientes.
+    Aunque se descarguen 5 días como respaldo técnico, las alertas tempranas
+    se generan solo dentro de ALERT_WINDOW_HOURS.
+    """
     conn = get_conn()
     conn.execute("DELETE FROM alertas")
     zonas = conn.execute("SELECT * FROM zonas WHERE activa=1").fetchall()
@@ -59,6 +94,8 @@ def recalcular_alertas_existentes():
     total = 0
 
     for foco in focos:
+        if not foco_en_ventana_alerta(foco, ALERT_WINDOW_HOURS):
+            continue
         for zona in zonas:
             dist = haversine_km(zona["latitud"], zona["longitud"], foco["latitude"], foco["longitude"])
             if dist <= float(zona["radio_km"]):
@@ -91,7 +128,8 @@ def run_monitoring():
         "alertas_totales": alerts_total,
         "reports": reports,
         "strategy_info": strategy_info,
-        "fecha_utc": now_utc()
+        "fecha_utc": now_utc(),
+        "alert_window_hours": ALERT_WINDOW_HOURS
     }
 
 

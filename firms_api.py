@@ -1,7 +1,7 @@
 import csv
 from io import StringIO
 import requests
-from config import FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCES
+from config import FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_QUERY_DAYS, FIRMS_SOURCES
 
 
 AREA_PRESETS = {
@@ -34,7 +34,7 @@ def check_key():
 def build_area_url(source, bbox=None, days=None):
     check_key()
     bbox = bbox or FIRMS_AREA_BBOX
-    days = int(days or FIRMS_DAY_RANGE)
+    days = int(days or FIRMS_QUERY_DAYS)
     return f"https://firms.modaps.eosdis.nasa.gov/api/area/csv/{FIRMS_MAP_KEY}/{source}/{bbox}/{days}"
 
 
@@ -176,7 +176,7 @@ def fetch_auto_scz_bolivia(days=None):
     """
     all_reports = []
     strategy = []
-    days = int(days or FIRMS_DAY_RANGE)
+    days = int(days or FIRMS_QUERY_DAYS)
 
     for area_name in ["Santa Cruz", "Bolivia"]:
         bbox = AREA_PRESETS[area_name]
