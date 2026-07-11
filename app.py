@@ -104,6 +104,45 @@ input,select {{ width:100%; padding:11px; margin-top:5px; border:1px solid #cbd5
 .report-kpi strong {{ font-size:28px; display:block; }}
 .print-actions,.quick-actions {{ display:flex; gap:10px; flex-wrap:wrap; margin:14px 0; }}
 pre {{ white-space:pre-wrap; background:#111827; color:#e5e7eb; padding:14px; border-radius:8px; overflow:auto; }}
+
+.map-toolbar {{
+  position:absolute;
+  z-index:1000;
+  background:white;
+  padding:12px;
+  top:148px;
+  right:16px;
+  border-radius:16px;
+  box-shadow:0 8px 28px rgba(0,0,0,.18);
+  max-width:330px;
+}}
+.map-toolbar button {{
+  padding:8px 10px;
+  font-size:12px;
+  margin:3px;
+  border-radius:10px;
+}}
+.map-toolbar .lightbtn {{
+  background:#e9f5ee;
+  color:#14532d;
+}}
+.map-status {{
+  font-size:12px;
+  color:#334155;
+  margin-top:8px;
+  line-height:1.35;
+}}
+.clean-card {{
+  border-left:6px solid var(--verde);
+}}
+.public-note {{
+  background:#eefcf3;
+  border-left:5px solid #15803d;
+  padding:14px;
+  border-radius:12px;
+  margin-bottom:16px;
+}}
+
 @media(max-width:900px) {{ .hero,.form-grid {{ grid-template-columns:1fr; }} main {{ padding:18px; }} header,nav {{ padding-left:18px; padding-right:18px; }} }}
 @media print {{ header, nav, .print-actions {{ display:none !important; }} body {{ background:white; }} main {{ padding:0; }} .card {{ box-shadow:none; border:0; padding:0; }} }}
 </style>
@@ -116,12 +155,9 @@ pre {{ white-space:pre-wrap; background:#111827; color:#e5e7eb; padding:14px; bo
 <a href="/resumen">Resumen</a>
 <a href="/reporte">Reporte</a>
 <a href="/alertas">Alertas</a>
-<a href="/focos">Focos</a>
 <a href="/zonas">Zonas</a>
 <a href="/usuarios">Usuarios</a>
 <a href="/correos">Correos</a>
-<a href="/prueba-firms">Prueba FIRMS</a>
-<a href="/prueba-firms">Prueba FIRMS</a>
 <a href="/configuracion">Configuración</a>
 </nav>
 <main>{body}</main>
@@ -204,7 +240,7 @@ def inicio():
         <section class="hero">
           <div>
             <h2>Monitoreo de fuego cercano</h2>
-            <p>Registra usuarios y zonas de interés. Luego actualiza el monitoreo para detectar focos de calor cercanos.</p>
+            <p>Registra usuarios y zonas de interés. CampoSeguro consulta FIRMS y prioriza alertas recientes para seguimiento preventivo.</p>
             <form method="post" action="/actualizar" style="display:inline-block;"><button type="submit">Actualizar monitoreo</button></form>
             <a class="button light" href="/mapa">Ver mapa</a>
             <div class="quick-actions">
@@ -297,7 +333,10 @@ def mapa():
         alertas = rows_to_dicts(conn.execute("""
             SELECT a.*, z.nombre_zona, f.latitude, f.longitude, f.acq_date, f.acq_time, f.fuente
             FROM alertas a JOIN zonas z ON z.id=a.zona_id JOIN focos f ON f.id=a.foco_id
-            ORDER BY a.creada_utc DESC LIMIT 1000
+            ORDER BY
+              CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END,
+              a.distancia_km ASC
+            LIMIT 1500
         """).fetchall())
         conn.close()
 
@@ -305,17 +344,33 @@ def mapa():
         <style>
         main {{ padding:0; }}
         #map {{ height:calc(100vh - 126px); width:100%; }}
-        .panel {{ position:absolute; z-index:1000; background:white; padding:14px 16px; top:150px; left:16px; border-radius:16px; box-shadow:0 8px 28px rgba(0,0,0,.2); max-width:360px; }}
+        .panel {{ position:absolute; z-index:1000; background:white; padding:14px 16px; top:148px; left:16px; border-radius:16px; box-shadow:0 8px 28px rgba(0,0,0,.2); max-width:330px; }}
         .legend-dot {{ display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; }}
         </style>
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
         <div class="panel">
           <strong>CampoSeguro</strong><br>
-          Zonas: {len(zonas)}<br>Focos: {len(focos)}<br>Alertas: {len(alertas)}<hr>
+          Zonas: {len(zonas)}<br>
+          Focos descargados: {len(focos)}<br>
+          Alertas 24h: {len(alertas)}<hr>
+          <span class="legend-dot" style="background:#7f1d1d"></span>Alerta prioritaria<br>
+          <span class="legend-dot" style="background:#2563eb"></span>Zona monitoreada<br>
           <span class="legend-dot" style="background:#f97316"></span>Foco MODIS<br>
-          <span class="legend-dot" style="background:#dc2626"></span>Foco VIIRS<br>
-          <span class="legend-dot" style="background:#7f1d1d"></span>Alerta
+          <span class="legend-dot" style="background:#dc2626"></span>Foco VIIRS
         </div>
+
+        <div class="map-toolbar">
+          <strong>Capas del mapa</strong><br>
+          <button class="lightbtn" onclick="soloAlertas()">Solo alertas</button>
+          <button class="lightbtn" onclick="mostrarZonas()">Zonas</button>
+          <button class="lightbtn" onclick="mostrarFocos()">Focos</button>
+          <button class="lightbtn" onclick="mostrarTodo()">Todo</button>
+          <button class="secondary" onclick="limpiarFocos()">Limpiar focos</button>
+          <div class="map-status">
+            Vista inicial recomendada: solo zonas y alertas. Los focos generales se pueden activar para análisis técnico.
+          </div>
+        </div>
+
         <div id="map"></div>
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
         <script>
@@ -325,27 +380,66 @@ def mapa():
         const map = L.map('map').setView([-17.8, -61.5], 7);
         L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{ maxZoom:19, attribution:'&copy; OpenStreetMap' }}).addTo(map);
 
+        const layerZonas = L.layerGroup().addTo(map);
+        const layerFocos = L.layerGroup();
+        const layerAlertas = L.layerGroup().addTo(map);
+
+        function nivelColor(nivel) {{
+          if (nivel === 'CRITICO') return '#991b1b';
+          if (nivel === 'ATENCION') return '#d97706';
+          return '#2563eb';
+        }}
+
         zonas.forEach(z => {{
           L.circle([z.latitud, z.longitud], {{ radius:z.radio_km*1000, color:'#2563eb', weight:3, fillOpacity:0.035 }})
-            .addTo(map).bindPopup(`<b>Zona:</b> ${{z.nombre_zona}}<br><b>Usuario:</b> ${{z.usuario_nombre || 'Sin usuario'}}<br><b>Radio:</b> ${{z.radio_km}} km`);
-          L.marker([z.latitud, z.longitud]).addTo(map).bindPopup(`<b>Zona:</b> ${{z.nombre_zona}}`);
+            .addTo(layerZonas).bindPopup(`<b>Zona:</b> ${{z.nombre_zona}}<br><b>Usuario:</b> ${{z.usuario_nombre || 'Sin usuario'}}<br><b>Radio:</b> ${{z.radio_km}} km`);
+          L.marker([z.latitud, z.longitud]).addTo(layerZonas).bindPopup(`<b>Zona:</b> ${{z.nombre_zona}}`);
         }});
 
         focos.forEach(f => {{
           const color = (f.fuente || '').includes('VIIRS') ? '#dc2626' : '#f97316';
-          L.circleMarker([f.latitude, f.longitude], {{ radius:5, color:color, fillColor:color, fillOpacity:0.82, weight:1 }})
-            .addTo(map).bindPopup(`<b>Foco de calor</b><br>${{f.fuente}}<br>${{f.acq_date}} ${{f.acq_time}}<br>FRP: ${{f.frp || ''}}`);
+          L.circleMarker([f.latitude, f.longitude], {{ radius:4, color:color, fillColor:color, fillOpacity:0.65, weight:1 }})
+            .addTo(layerFocos).bindPopup(`<b>Foco de calor</b><br>${{f.fuente}}<br>${{f.acq_date}} ${{f.acq_time}}<br>FRP: ${{f.frp || ''}}`);
         }});
 
         alertas.forEach(a => {{
-          L.circleMarker([a.latitude, a.longitude], {{ radius:10, color:'#7f1d1d', fillColor:'#7f1d1d', fillOpacity:0.92, weight:2 }})
-            .addTo(map).bindPopup(`<b>ALERTA ${{a.nivel}}</b><br>${{a.nombre_zona}}<br>Distancia: ${{a.distancia_km}} km`);
+          const color = nivelColor(a.nivel);
+          L.circleMarker([a.latitude, a.longitude], {{ radius:11, color:color, fillColor:color, fillOpacity:0.92, weight:2 }})
+            .addTo(layerAlertas).bindPopup(`<b>ALERTA ${{a.nivel}}</b><br>${{a.nombre_zona}}<br>Distancia: ${{a.distancia_km}} km<br>${{a.fuente}}<br>${{a.acq_date}} ${{a.acq_time}}`);
         }});
+
+        function addIfMissing(layer) {{ if (!map.hasLayer(layer)) map.addLayer(layer); }}
+        function removeIfPresent(layer) {{ if (map.hasLayer(layer)) map.removeLayer(layer); }}
+
+        function soloAlertas() {{
+          addIfMissing(layerZonas);
+          addIfMissing(layerAlertas);
+          removeIfPresent(layerFocos);
+        }}
+        function mostrarZonas() {{
+          addIfMissing(layerZonas);
+        }}
+        function mostrarFocos() {{
+          addIfMissing(layerFocos);
+        }}
+        function limpiarFocos() {{
+          removeIfPresent(layerFocos);
+        }}
+        function mostrarTodo() {{
+          addIfMissing(layerZonas);
+          addIfMissing(layerAlertas);
+          addIfMissing(layerFocos);
+        }}
+
+        // Vista inicial profesional: zonas + alertas, sin saturar con todos los focos generales.
+        soloAlertas();
         </script>
         """
         return layout("Mapa", body)
     except Exception as exc:
         return error_page(exc)
+
+
 
 
 @app.get("/usuarios", response_class=HTMLResponse)
@@ -991,6 +1085,27 @@ def prueba_firms(bbox: str = "", days: int = 1, preset: str = ""):
         return layout("Prueba FIRMS", body)
     except Exception as exc:
         return error_page(exc)
+
+
+
+
+@app.get("/landing", response_class=HTMLResponse)
+def landing():
+    body = """
+    <section class="hero">
+      <div>
+        <h2>CampoSeguro</h2>
+        <p>Plataforma de alerta temprana informativa para monitorear focos de calor cercanos a zonas registradas.</p>
+        <p>Diseñada para predios, comunidades, municipios, áreas protegidas y proyectos territoriales.</p>
+        <p><a class="button" href="/">Entrar a la plataforma</a></p>
+      </div>
+      <div class="public-note">
+        <strong>Funciones principales</strong><br>
+        Monitoreo FIRMS, zonas con radio configurable, alertas recientes, reporte operativo y mensajes listos para comunicación preventiva.
+      </div>
+    </section>
+    """
+    return layout("CampoSeguro", body)
 
 
 @app.get("/configuracion", response_class=HTMLResponse)

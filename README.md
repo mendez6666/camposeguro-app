@@ -52,3 +52,12 @@ La alerta temprana se mantiene así:
 - `FIRMS_QUERY_DAYS=5`: consulta técnica de respaldo para evitar que Render/API devuelva vacío por desfase o ventana corta.
 - `ALERT_WINDOW_HOURS=24`: solo los focos de las últimas 24 horas generan alertas.
 - Estrategia automática: Santa Cruz → Bolivia.
+## Versión 2.1 Producción Demo
+
+Cambios:
+- Menú limpio para presentación.
+- Se oculta la pestaña pública de prueba FIRMS.
+- El mapa inicia con zonas + alertas, sin saturarse con todos los focos.
+- Botones de capas: solo alertas, zonas, focos, todo y limpiar focos.
+- Ruta técnica `/prueba-firms` se mantiene para diagnóstico, pero no aparece en el menú.
+- Ruta `/landing` agregada como página simple de presentación.
