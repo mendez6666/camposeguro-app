@@ -12,9 +12,10 @@ from config import FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCE
 from db import init_db, seed_demo_data, get_conn, rows_to_dicts
 from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
 from emailer import preparar_correos_pendientes, procesar_correos_pendientes, estadisticas_correos, listar_correos, smtp_config_ok
+from firms_api import test_source, masked_key
 
 
-app = FastAPI(title="CampoSeguro v1.7")
+app = FastAPI(title="CampoSeguro v1.8")
 
 
 def esc(x):
@@ -119,6 +120,7 @@ pre {{ white-space:pre-wrap; background:#111827; color:#e5e7eb; padding:14px; bo
 <a href="/zonas">Zonas</a>
 <a href="/usuarios">Usuarios</a>
 <a href="/correos">Correos</a>
+<a href="/prueba-firms">Prueba FIRMS</a>
 <a href="/configuracion">Configuración</a>
 </nav>
 <main>{body}</main>
@@ -251,9 +253,9 @@ def actualizar():
         rows = ""
         for rep in r["reports"]:
             if rep["error"] or rep["message"]:
-                rows += f"<tr><td>{esc(rep['source'])}</td><td>{esc(rep['error'] or rep['message'])}</td></tr>"
+                rows += f"<tr><td>{esc(rep['source'])}</td><td>{esc(rep.get('url',''))}</td><td>{esc(rep['error'] or rep['message'])}</td></tr>"
         if rows:
-            detail = f"<div class='card'><h3>Mensajes técnicos</h3><table><tr><th>Fuente</th><th>Mensaje</th></tr>{rows}</table></div>"
+            detail = f"<div class='card'><h3>Mensajes técnicos</h3><table><tr><th>Fuente</th><th>URL</th><th>Mensaje</th></tr>{rows}</table></div>"
 
         body = f"""
         <div class="card">
@@ -890,6 +892,92 @@ def correos_enviar():
         return error_page(exc)
 
 
+
+
+@app.get("/prueba-firms", response_class=HTMLResponse)
+def prueba_firms(bbox: str = "", days: int = 1):
+    try:
+        bbox_actual = bbox or FIRMS_AREA_BBOX
+        dias = int(days or FIRMS_DAY_RANGE)
+        tests = []
+        for source in FIRMS_SOURCES:
+            tests.append(test_source(source, bbox=bbox_actual, days=dias))
+
+        rows = ""
+        total = 0
+        details = ""
+        for t in tests:
+            total += int(t["parsed_count"] or 0)
+            estado = "OK" if t["ok"] else "ERROR"
+            rows += f"""
+            <tr>
+              <td>{esc(t['source'])}</td>
+              <td>{esc(estado)}</td>
+              <td>{esc(t['status_code'])}</td>
+              <td>{esc(t['parsed_count'])}</td>
+              <td>{esc(t['url'])}</td>
+              <td>{esc(t['error'] or t['parse_message'])}</td>
+            </tr>
+            """
+            details += f"""
+            <div class="card">
+              <h3>{esc(t['source'])}</h3>
+              <p><strong>URL:</strong> {esc(t['url'])}</p>
+              <p><strong>Status:</strong> {esc(t['status_code'])} | <strong>Filas leídas:</strong> {esc(t['parsed_count'])}</p>
+              <pre>{esc(t['first_lines'] or t['error'] or 'Sin contenido')}</pre>
+            </div>
+            """
+
+        body = f"""
+        <div class="card">
+          <h2>Prueba técnica FIRMS</h2>
+          <p>Esta pantalla prueba la conexión con FIRMS desde Render sin guardar nada en la base.</p>
+          <p><strong>Llave actual:</strong> {esc(masked_key())}</p>
+          <p><strong>BBOX usado:</strong> {esc(bbox_actual)}</p>
+          <p><strong>Días usados:</strong> {esc(dias)}</p>
+          <p><strong>Total de filas leídas:</strong> {esc(total)}</p>
+
+          <form method="get" action="/prueba-firms">
+            <div class="form-grid">
+              <div>
+                <label>BBOX de prueba</label>
+                <input name="bbox" value="{esc(bbox_actual)}">
+              </div>
+              <div>
+                <label>Días</label>
+                <select name="days">
+                  <option value="1" {"selected" if dias == 1 else ""}>1 día</option>
+                  <option value="3" {"selected" if dias == 3 else ""}>3 días</option>
+                  <option value="5" {"selected" if dias == 5 else ""}>5 días</option>
+                  <option value="10" {"selected" if dias == 10 else ""}>10 días</option>
+                </select>
+              </div>
+            </div>
+            <p><button type="submit">Probar FIRMS</button></p>
+          </form>
+
+          <p>
+            <a class="button light" href="/prueba-firms?bbox=-64.9,-20.6,-57.0,-13.0&days=5">Probar Santa Cruz 5 días</a>
+            <a class="button light" href="/prueba-firms?bbox=-70.0,-23.5,-57.0,-9.0&days=5">Probar Bolivia 5 días</a>
+            <a class="button light" href="/prueba-firms?bbox=-82.0,-56.0,-34.0,13.0&days=3">Probar Sudamérica 3 días</a>
+          </p>
+        </div>
+
+        <div class="card">
+          <h2>Resumen por fuente</h2>
+          <table>
+            <thead><tr><th>Fuente</th><th>Estado</th><th>Status</th><th>Filas</th><th>URL</th><th>Mensaje</th></tr></thead>
+            <tbody>{rows}</tbody>
+          </table>
+        </div>
+
+        {details}
+        """
+        return layout("Prueba FIRMS", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
 @app.get("/configuracion", response_class=HTMLResponse)
 def configuracion():
     key_status = "Configurada" if FIRMS_MAP_KEY and FIRMS_MAP_KEY != "coloca_aqui_tu_map_key" else "Falta configurar"
@@ -902,6 +990,7 @@ def configuracion():
       <p><strong>Fuentes:</strong> {esc(FIRMS_SOURCES)}</p>
       <p><strong>Ubicación desde teléfono:</strong> disponible al crear o editar zonas.</p>
       <p><strong>Correo:</strong> EMAIL_ENABLED controla si se envían correos reales o se generan archivos outbox.</p>
+      <p><a class="button light" href="/prueba-firms">Abrir prueba técnica FIRMS</a></p>
       <p>Para cambiar FIRMS, edita el archivo <strong>.env</strong> y vuelve a abrir CampoSeguro.</p>
     </div>
     <div class="card">
