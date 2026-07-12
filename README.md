@@ -117,3 +117,15 @@ Cambios principales:
   - Alertas + focos: alertas + zonas + focos cercanos.
   - Todo: todas las capas.
 - Mantiene login básico de v2.5.
+## Versión 2.8 - Mapa simple y profesional
+
+Cambio principal:
+- Se simplifica el mapa para que sea más intuitivo.
+- Se eliminan los puntos azules de alertas del mapa.
+- El mapa queda con tres botones:
+  - Zonas
+  - Focos
+  - Todo
+- Las alertas quedan en las pestañas Alertas y Reporte, no mezcladas como puntos en el mapa.
+- Las zonas se muestran como círculos azules con centro pequeño.
+- Los focos se muestran como puntos FIRMS MODIS/VIIRS.
