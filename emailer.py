@@ -3,7 +3,7 @@ import re
 import smtplib
 from email.message import EmailMessage
 
-from config import OUTBOX_DIR, EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_TLS, SMTP_USER, SMTP_PASSWORD, SMTP_FROM
+from config import OUTBOX_DIR, EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_TLS, SMTP_USER, SMTP_PASSWORD, SMTP_FROM, EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE
 from db import get_conn
 
 
@@ -14,6 +14,17 @@ def now_utc():
 def clean_filename(text):
     text = re.sub(r"[^A-Za-z0-9_\-\.]+", "_", str(text))
     return text[:160]
+
+
+
+def nivel_rank_email(nivel):
+    orden = {"INFORMATIVO": 1, "ATENCION": 2, "CRITICO": 3}
+    return orden.get(str(nivel or "").upper(), 0)
+
+
+def nivel_permitido_email(nivel):
+    return nivel_rank_email(nivel) >= nivel_rank_email(EMAIL_MIN_LEVEL)
+
 
 
 def recomendacion_por_nivel(nivel):
@@ -52,10 +63,14 @@ CampoSeguro es una herramienta informativa basada en datos satelitales. No reemp
 
 
 def alerta_rows_no_encoladas():
+    """
+    Devuelve alertas elegibles para correo, evitando saturación.
+    Por defecto solo envía ATENCION/CRITICO y máximo 1 alerta por zona.
+    """
     conn = get_conn()
     rows = conn.execute("""
         SELECT a.id AS alerta_id, a.nivel, a.distancia_km,
-               z.nombre_zona, z.municipio, z.contacto_email,
+               z.id AS zona_id, z.nombre_zona, z.municipio, z.contacto_email,
                u.nombre AS usuario_nombre, u.email AS usuario_email, u.telefono AS usuario_telefono,
                f.latitude, f.longitude, f.acq_date, f.acq_time, f.fuente
         FROM alertas a
@@ -63,10 +78,28 @@ def alerta_rows_no_encoladas():
         LEFT JOIN usuarios u ON u.id=z.usuario_id
         JOIN focos f ON f.id=a.foco_id
         WHERE NOT EXISTS (SELECT 1 FROM correos_alerta c WHERE c.alerta_id=a.id)
-        ORDER BY CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END, a.distancia_km ASC
+        ORDER BY CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END,
+                 z.id ASC,
+                 a.distancia_km ASC
     """).fetchall()
     conn.close()
-    return rows
+
+    filtradas = []
+    por_zona = {}
+
+    for r in rows:
+        if not nivel_permitido_email(r["nivel"]):
+            continue
+
+        zona_id = r["zona_id"]
+        usados = por_zona.get(zona_id, 0)
+        if EMAIL_MAX_PER_ZONE > 0 and usados >= EMAIL_MAX_PER_ZONE:
+            continue
+
+        filtradas.append(r)
+        por_zona[zona_id] = usados + 1
+
+    return filtradas
 
 
 def preparar_correos_pendientes():

@@ -1,6 +1,6 @@
 import sqlite3
 from datetime import datetime, timezone
-from config import DB_PATH
+from config import DB_PATH, DEFAULT_ZONE_RADIUS_KM
 
 
 def now_utc():
@@ -132,12 +132,12 @@ def seed_demo_data():
     zone_count = cur.execute("SELECT COUNT(*) FROM zonas").fetchone()[0]
     if zone_count == 0:
         rows = [
-            (usuario_piloto, "Santa Cruz de la Sierra", "correo@ejemplo.com", "Ciudad", "Santa Cruz", "Santa Cruz de la Sierra", -17.7833, -63.1821, 50, 1, now_utc()),
-            (usuario_piloto, "San Ignacio de Velasco", "correo@ejemplo.com", "Municipio", "Santa Cruz", "San Ignacio de Velasco", -16.3700, -60.9600, 50, 1, now_utc()),
-            (usuario_piloto, "Roboré", "correo@ejemplo.com", "Municipio", "Santa Cruz", "Roboré", -18.3333, -59.7667, 50, 1, now_utc()),
-            (usuario_piloto, "San Matías", "correo@ejemplo.com", "Municipio", "Santa Cruz", "San Matías", -16.3667, -58.4000, 50, 1, now_utc()),
-            (usuario_piloto, "Charagua Iyambae", "correo@ejemplo.com", "Municipio", "Santa Cruz", "Charagua Iyambae", -19.8000, -63.2200, 50, 1, now_utc()),
-            (usuario_piloto, "Puerto Suárez", "correo@ejemplo.com", "Municipio", "Santa Cruz", "Puerto Suárez", -18.9500, -57.8000, 50, 1, now_utc()),
+            (usuario_piloto, "Santa Cruz de la Sierra", "correo@ejemplo.com", "Ciudad", "Santa Cruz", "Santa Cruz de la Sierra", -17.7833, -63.1821, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
+            (usuario_piloto, "San Ignacio de Velasco", "correo@ejemplo.com", "Municipio", "Santa Cruz", "San Ignacio de Velasco", -16.3700, -60.9600, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
+            (usuario_piloto, "Roboré", "correo@ejemplo.com", "Municipio", "Santa Cruz", "Roboré", -18.3333, -59.7667, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
+            (usuario_piloto, "San Matías", "correo@ejemplo.com", "Municipio", "Santa Cruz", "San Matías", -16.3667, -58.4000, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
+            (usuario_piloto, "Charagua Iyambae", "correo@ejemplo.com", "Municipio", "Santa Cruz", "Charagua Iyambae", -19.8000, -63.2200, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
+            (usuario_piloto, "Puerto Suárez", "correo@ejemplo.com", "Municipio", "Santa Cruz", "Puerto Suárez", -18.9500, -57.8000, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
         ]
         cur.executemany("""
             INSERT INTO zonas

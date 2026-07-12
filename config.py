@@ -65,7 +65,20 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
 SESSION_SECRET = os.getenv("SESSION_SECRET", ADMIN_PASSWORD or "cambia_este_secreto_en_render").strip()
 AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "camposeguro_session").strip()
 AUTH_COOKIE_SECURE = env_bool("AUTH_COOKIE_SECURE", "true")
-AUTH_SESSION_HOURS = int(os.getenv("AUTH_SESSION_HOURS", "12"))# Acceso de cliente / vista solo lectura
+AUTH_SESSION_HOURS = int(os.getenv("AUTH_SESSION_HOURS", "12"))
+
+# Acceso de cliente / vista solo lectura
 CLIENT_USER = os.getenv("CLIENT_USER", "cliente").strip()
 CLIENT_PASSWORD = os.getenv("CLIENT_PASSWORD", "").strip()
 CLIENT_NAME = os.getenv("CLIENT_NAME", "Cliente CampoSeguro").strip()
+
+# Radios de alerta por zona
+DEFAULT_ZONE_RADIUS_KM = float(os.getenv("DEFAULT_ZONE_RADIUS_KM", "15"))
+CLIENT_MIN_RADIUS_KM = float(os.getenv("CLIENT_MIN_RADIUS_KM", "1"))
+CLIENT_MAX_RADIUS_KM = float(os.getenv("CLIENT_MAX_RADIUS_KM", "50"))
+
+# Control de correos para evitar saturación
+# Valores: CRITICO, ATENCION, INFORMATIVO
+EMAIL_MIN_LEVEL = os.getenv("EMAIL_MIN_LEVEL", "ATENCION").strip().upper()
+EMAIL_MAX_PER_ZONE = int(os.getenv("EMAIL_MAX_PER_ZONE", "1"))
+

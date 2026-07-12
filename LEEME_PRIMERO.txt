@@ -136,3 +136,26 @@ El cliente no puede acceder a:
 - Correos
 - Actualizar monitoreo
 - Prueba FIRMS
+## Versión 3.0 - Radios configurables y correos controlados
+
+Cambios principales:
+- Se agrega `/cliente/zonas` para que el cliente ajuste el radio de sus zonas sin tocar coordenadas.
+- El radio recomendado baja a 15 km.
+- El administrador puede aplicar el radio recomendado a todas las zonas desde Zonas.
+- Los correos se controlan para evitar saturación:
+  - `EMAIL_MIN_LEVEL=ATENCION`
+  - `EMAIL_MAX_PER_ZONE=1`
+- Esto evita enviar cientos de correos por focos informativos o muy lejanos.
+
+Variables nuevas recomendadas en Render:
+```env
+DEFAULT_ZONE_RADIUS_KM=15
+CLIENT_MIN_RADIUS_KM=1
+CLIENT_MAX_RADIUS_KM=50
+EMAIL_MIN_LEVEL=ATENCION
+EMAIL_MAX_PER_ZONE=1
+```
+
+Nota sobre correos:
+- `EMAIL_ENABLED=false` no envía correos reales. Solo prepara/genera outbox.
+- Para correo real faltan variables SMTP: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM.

@@ -17,7 +17,9 @@ from config import (
     FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCES,
     AUTH_ENABLED, ADMIN_USER, ADMIN_PASSWORD, SESSION_SECRET,
     AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS,
-    CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME
+    CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME,
+    DEFAULT_ZONE_RADIUS_KM, CLIENT_MIN_RADIUS_KM, CLIENT_MAX_RADIUS_KM,
+    EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE
 )
 from db import init_db, seed_demo_data, get_conn, rows_to_dicts
 from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
@@ -25,7 +27,7 @@ from emailer import preparar_correos_pendientes, procesar_correos_pendientes, es
 from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 
 
-app = FastAPI(title="CampoSeguro v2.9")
+app = FastAPI(title="CampoSeguro v3.0")
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico"}
@@ -441,6 +443,30 @@ def stats():
 
 
 
+
+def radio_options_html(selected=None):
+    selected_val = float(selected if selected is not None else DEFAULT_ZONE_RADIUS_KM)
+    values = [1, 3, 5, 10, 15, 20, 25, 30, 50, 75, 100]
+    options = ""
+    for v in values:
+        if float(v) < CLIENT_MIN_RADIUS_KM or float(v) > max(CLIENT_MAX_RADIUS_KM, DEFAULT_ZONE_RADIUS_KM):
+            continue
+        sel = "selected" if abs(float(v) - selected_val) < 0.001 else ""
+        options += f'<option value="{v}" {sel}>{v} km</option>'
+    if str(selected_val).rstrip("0").rstrip(".") not in [str(v) for v in values]:
+        options += f'<option value="{selected_val}" selected>{selected_val:g} km</option>'
+    return options
+
+
+def clamp_radio_cliente(radio):
+    try:
+        r = float(radio)
+    except Exception:
+        r = DEFAULT_ZONE_RADIUS_KM
+    return max(CLIENT_MIN_RADIUS_KM, min(CLIENT_MAX_RADIUS_KM, r))
+
+
+
 def layout_cliente(title, body):
     return f"""<!doctype html>
 <html lang="es">
@@ -495,6 +521,7 @@ th {{ background:#eef5f0; }}
 <nav>
 <a href="/cliente">Inicio</a>
 <a href="/cliente/mapa">Mapa</a>
+<a href="/cliente/zonas">Mis zonas</a>
 <a href="/cliente/alertas">Mis alertas</a>
 <a href="/cliente/reporte">Reporte</a>
 <a href="/logout">Salir</a>
@@ -523,6 +550,7 @@ def cliente_inicio():
       <p>Consulta el mapa, revisa alertas registradas y descarga información operativa de manera simple. Esta vista es solo de lectura.</p>
       <p>
         <a class="button" href="/cliente/mapa">Ver mapa</a>
+        <a class="button light" href="/cliente/zonas">Ajustar radios</a>
         <a class="button light" href="/cliente/alertas">Ver alertas</a>
         <a class="button light" href="/cliente/reporte">Ver reporte</a>
       </p>
@@ -536,6 +564,62 @@ def cliente_inicio():
     <div class="notice">CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales de emergencia.</div>
     """
     return layout_cliente("CampoSeguro | Cliente", body)
+
+
+
+@app.get("/cliente/zonas", response_class=HTMLResponse)
+def cliente_zonas():
+    conn = get_conn()
+    zonas = rows_to_dicts(conn.execute("""
+        SELECT z.*, u.nombre AS usuario_nombre
+        FROM zonas z LEFT JOIN usuarios u ON u.id=z.usuario_id
+        WHERE z.activa=1
+        ORDER BY z.nombre_zona ASC
+    """).fetchall())
+    conn.close()
+
+    rows = ""
+    for z in zonas:
+        rows += f"""
+        <tr>
+          <td><strong>{esc(z['nombre_zona'])}</strong><br><small>{esc(z['municipio'] or '')}</small></td>
+          <td>{esc(z['radio_km'])} km</td>
+          <td>
+            <form method="post" action="/cliente/zonas/radio" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="hidden" name="zona_id" value="{esc(z['id'])}">
+              <select name="radio_km">{radio_options_html(z['radio_km'])}</select>
+              <button class="button" type="submit">Guardar radio</button>
+            </form>
+          </td>
+        </tr>
+        """
+
+    body = f"""
+    <div class="card">
+      <h2>Mis zonas</h2>
+      <p>Ajusta el radio de alerta de cada zona. Un radio más corto reduce alertas lejanas y evita saturar el correo.</p>
+      <div class="notice">
+        Recomendación inicial: <strong>{esc(DEFAULT_ZONE_RADIUS_KM)} km</strong>. Para predios pequeños: 3 a 10 km. Para municipios o áreas grandes: 15 a 30 km.
+      </div>
+      <table>
+        <tr><th>Zona</th><th>Radio actual</th><th>Nuevo radio</th></tr>
+        {rows}
+      </table>
+    </div>
+    """
+    return layout_cliente("CampoSeguro | Mis zonas", body)
+
+
+@app.post("/cliente/zonas/radio")
+def cliente_zona_radio(zona_id: int = Form(...), radio_km: float = Form(...)):
+    radio = clamp_radio_cliente(radio_km)
+    conn = get_conn()
+    conn.execute("UPDATE zonas SET radio_km=? WHERE id=? AND activa=1", (radio, zona_id))
+    conn.commit()
+    conn.close()
+    recalcular_alertas_existentes()
+    return RedirectResponse("/cliente/zonas", status_code=303)
+
 
 
 @app.get("/cliente/mapa", response_class=HTMLResponse)
@@ -1316,7 +1400,8 @@ def zonas():
           <h2>Zonas registradas</h2>
           <p>Cada zona puede estar asociada a un usuario o responsable.</p>
           <p><a class="button" href="/zonas/nueva">Nueva zona</a> <a class="button light" href="/usuarios/nuevo">Nuevo usuario</a>
-          <form method="post" action="/recalcular-alertas" style="display:inline-block;"><button class="secondary" type="submit">Recalcular alertas</button></form></p>
+          <form method="post" action="/recalcular-alertas" style="display:inline-block;"><button class="secondary" type="submit">Recalcular alertas</button></form>
+          <form method="post" action="/zonas/radio-recomendado" style="display:inline-block;"><button class="secondary" type="submit">Aplicar radio recomendado</button></form></p>
           <table><thead><tr><th>Zona</th><th>Usuario</th><th>Tipo</th><th>Municipio</th><th>Coordenadas</th><th>Radio</th><th>Estado</th><th>Acción</th></tr></thead><tbody>{rows}</tbody></table>
         </div>
         <div class="geo-help">En celular, al crear o editar una zona puedes tocar “Usar mi ubicación actual”.</div>
@@ -1354,7 +1439,7 @@ def zona_form():
           <div><label>Municipio</label><input name="municipio" placeholder="Ej. Roboré"></div>
           <div><label>Latitud</label><input name="latitud" type="number" step="any" required placeholder="-17.0000000"></div>
           <div><label>Longitud</label><input name="longitud" type="number" step="any" required placeholder="-60.0000000"></div>
-          <div><label>Radio km</label><select name="radio_km"><option value="5">5 km</option><option value="10">10 km</option><option value="25">25 km</option><option value="50" selected>50 km</option><option value="100">100 km</option></select></div>
+          <div><label>Radio km</label><select name="radio_km">{radio_options_html(DEFAULT_ZONE_RADIUS_KM)}</select></div>
         </div>
         <p><button id="geo-btn" type="button" onclick="usarUbicacionActual()">Usar mi ubicación actual</button> <button type="submit">Guardar zona</button></p>
       </form>
@@ -1364,7 +1449,7 @@ def zona_form():
 
 
 @app.post("/zonas/nueva")
-def zona_nueva(nombre_zona: str = Form(...), contacto_email: str = Form(""), tipo_zona: str = Form("Predio"), departamento: str = Form("Santa Cruz"), municipio: str = Form(""), latitud: float = Form(...), longitud: float = Form(...), radio_km: float = Form(50), usuario_id: str = Form("")):
+def zona_nueva(nombre_zona: str = Form(...), contacto_email: str = Form(""), tipo_zona: str = Form("Predio"), departamento: str = Form("Santa Cruz"), municipio: str = Form(""), latitud: float = Form(...), longitud: float = Form(...), radio_km: float = Form(DEFAULT_ZONE_RADIUS_KM), usuario_id: str = Form("")):
     uid = int(usuario_id) if str(usuario_id).strip() else None
     if not contacto_email and uid:
         conn_tmp = get_conn()
@@ -1410,7 +1495,7 @@ def zona_editar_form(zona_id: int):
               <div><label>Municipio</label><input name="municipio" value="{esc(z['municipio'] or '')}"></div>
               <div><label>Latitud</label><input name="latitud" type="number" step="any" value="{esc(z['latitud'])}" required></div>
               <div><label>Longitud</label><input name="longitud" type="number" step="any" value="{esc(z['longitud'])}" required></div>
-              <div><label>Radio</label><select name="radio_km"><option value="5" {selected(5)}>5 km</option><option value="10" {selected(10)}>10 km</option><option value="25" {selected(25)}>25 km</option><option value="50" {selected(50)}>50 km</option><option value="100" {selected(100)}>100 km</option></select></div>
+              <div><label>Radio</label><select name="radio_km">{radio_options_html(z["radio_km"])}</select></div>
               <div><label>Estado</label><select name="activa"><option value="1" {"selected" if z["activa"] else ""}>Activa</option><option value="0" {"" if z["activa"] else "selected"}>Inactiva</option></select></div>
             </div>
             <p><button id="geo-btn" type="button" onclick="usarUbicacionActual()">Usar mi ubicación actual</button> <button type="submit">Guardar y recalcular</button> <a class="button light" href="/zonas">Volver</a></p>
@@ -1423,7 +1508,7 @@ def zona_editar_form(zona_id: int):
 
 
 @app.post("/zonas/{zona_id}/editar")
-def zona_editar(zona_id: int, nombre_zona: str = Form(...), contacto_email: str = Form(""), tipo_zona: str = Form("Predio"), municipio: str = Form(""), latitud: float = Form(...), longitud: float = Form(...), radio_km: float = Form(50), activa: int = Form(1), usuario_id: str = Form("")):
+def zona_editar(zona_id: int, nombre_zona: str = Form(...), contacto_email: str = Form(""), tipo_zona: str = Form("Predio"), municipio: str = Form(""), latitud: float = Form(...), longitud: float = Form(...), radio_km: float = Form(DEFAULT_ZONE_RADIUS_KM), activa: int = Form(1), usuario_id: str = Form("")):
     uid = int(usuario_id) if str(usuario_id).strip() else None
     if not contacto_email and uid:
         conn_tmp = get_conn()
@@ -1437,6 +1522,17 @@ def zona_editar(zona_id: int, nombre_zona: str = Form(...), contacto_email: str 
     conn.execute("""
         UPDATE zonas SET usuario_id=?, nombre_zona=?, contacto_email=?, tipo_zona=?, municipio=?, latitud=?, longitud=?, radio_km=?, activa=? WHERE id=?
     """, (uid, nombre_zona, contacto_email, tipo_zona, municipio, latitud, longitud, radio_km, activa, zona_id))
+    conn.commit()
+    conn.close()
+    recalcular_alertas_existentes()
+    return RedirectResponse("/zonas", status_code=303)
+
+
+
+@app.post("/zonas/radio-recomendado")
+def zonas_radio_recomendado():
+    conn = get_conn()
+    conn.execute("UPDATE zonas SET radio_km=? WHERE activa=1", (DEFAULT_ZONE_RADIUS_KM,))
     conn.commit()
     conn.close()
     recalcular_alertas_existentes()
@@ -1844,6 +1940,8 @@ def configuracion():
       <p><strong>Fuentes:</strong> {esc(FIRMS_SOURCES)}</p>
       <p><strong>Ubicación desde teléfono:</strong> disponible al crear o editar zonas.</p>
       <p><strong>Correo:</strong> EMAIL_ENABLED controla si se envían correos reales o se generan archivos outbox.</p>
+      <p><strong>Control anti-saturación:</strong> correos desde nivel {esc(EMAIL_MIN_LEVEL)}, máximo {esc(EMAIL_MAX_PER_ZONE)} alerta(s) por zona.</p>
+      <p><strong>Radio recomendado:</strong> {esc(DEFAULT_ZONE_RADIUS_KM)} km</p>
       <p><strong>Acceso protegido:</strong> {esc("Activado" if AUTH_ENABLED else "Desactivado")}</p>
       <p><strong>Usuario administrador:</strong> {esc(ADMIN_USER)}</p>
       <p><strong>Usuario cliente:</strong> {esc(CLIENT_USER)}</p>
