@@ -105,3 +105,11 @@ AUTH_SESSION_HOURS=12
 Importante:
 - No subas la contraseña real a GitHub.
 - La contraseña debe configurarse en Render → Environment.
+## Versión 2.6 - Botones de mapa corregidos
+
+Cambio principal:
+- El botón "Zonas + focos" muestra zonas y focos cercanos.
+- El botón "Alertas + focos" muestra alertas, zonas y focos cercanos.
+- La vista operativa abre con zonas + alertas + focos cercanos.
+- La vista Bolivia muestra todos los focos regionales descargados.
+- Esto permite interpretar de dónde puede venir el fuego sin perder el panorama nacional.
