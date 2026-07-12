@@ -52,3 +52,16 @@ SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").strip().lower() in ["1", "true"
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER).strip()
+
+# Seguridad / acceso básico
+def env_bool(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in ["1", "true", "yes", "si", "sí"]
+
+AUTH_ENABLED = env_bool("AUTH_ENABLED", "true")
+ADMIN_USER = os.getenv("ADMIN_USER", "admin").strip()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
+SESSION_SECRET = os.getenv("SESSION_SECRET", ADMIN_PASSWORD or "cambia_este_secreto_en_render").strip()
+AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "camposeguro_session").strip()
+AUTH_COOKIE_SECURE = env_bool("AUTH_COOKIE_SECURE", "true")
+AUTH_SESSION_HOURS = int(os.getenv("AUTH_SESSION_HOURS", "12"))
+

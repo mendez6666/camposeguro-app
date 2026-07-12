@@ -65,3 +65,23 @@ Cambio principal:
 - Esto permite incluir Santa Cruz, Beni, Pando y otros departamentos.
 - Las alertas tempranas siguen filtradas a las últimas 24 horas mediante ALERT_WINDOW_HOURS=24.
 - La consulta técnica puede seguir usando FIRMS_QUERY_DAYS=5 para evitar vacíos por desfase temporal/API.
+## Versión 2.5 - Login y protección básica
+
+Cambio principal:
+- La plataforma queda protegida con inicio de sesión.
+- Rutas públicas: `/login`, `/logout`, `/landing`, `/healthz`.
+- El resto de la plataforma queda detrás del login.
+- Se recomienda configurar estas variables en Render antes de desplegar:
+
+```env
+AUTH_ENABLED=true
+ADMIN_USER=admin
+ADMIN_PASSWORD=elige_una_contrasena_segura
+SESSION_SECRET=elige_un_texto_largo_aleatorio
+AUTH_COOKIE_SECURE=true
+AUTH_SESSION_HOURS=12
+```
+
+Importante:
+- No subas la contraseña real a GitHub.
+- La contraseña debe configurarse en Render → Environment.

@@ -2,20 +2,181 @@ from datetime import datetime, timezone
 import html
 import json
 import traceback
+import time
+import hmac
+import hashlib
 import csv
 from io import StringIO
+from urllib.parse import quote
 
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
-from config import FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCES
+from config import (
+    FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCES,
+    AUTH_ENABLED, ADMIN_USER, ADMIN_PASSWORD, SESSION_SECRET,
+    AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS
+)
 from db import init_db, seed_demo_data, get_conn, rows_to_dicts
 from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
 from emailer import preparar_correos_pendientes, procesar_correos_pendientes, estadisticas_correos, listar_correos, smtp_config_ok
 from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 
 
-app = FastAPI(title="CampoSeguro v1.9")
+app = FastAPI(title="CampoSeguro v2.5")
+
+
+PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico"}
+
+
+def auth_configured():
+    return bool(ADMIN_PASSWORD)
+
+
+def make_session_token(username: str) -> str:
+    exp = int(time.time()) + (AUTH_SESSION_HOURS * 3600)
+    msg = f"{username}:{exp}"
+    sig = hmac.new(SESSION_SECRET.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{username}:{exp}:{sig}"
+
+
+def verify_session_token(token: str):
+    try:
+        username, exp_raw, sig = token.split(":", 2)
+        exp = int(exp_raw)
+        if exp < int(time.time()):
+            return None
+        if username != ADMIN_USER:
+            return None
+        msg = f"{username}:{exp}"
+        expected = hmac.new(SESSION_SECRET.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        return username
+    except Exception:
+        return None
+
+
+def current_user(request: Request):
+    token = request.cookies.get(AUTH_COOKIE_NAME, "")
+    return verify_session_token(token) if token else None
+
+
+def safe_next_url(next_url: str) -> str:
+    if not next_url or not next_url.startswith("/") or next_url.startswith("//"):
+        return "/"
+    return next_url
+
+
+@app.middleware("http")
+async def auth_guard(request: Request, call_next):
+    path = request.url.path
+
+    if not AUTH_ENABLED:
+        return await call_next(request)
+
+    if path in PUBLIC_PATHS or path.startswith("/login"):
+        return await call_next(request)
+
+    if current_user(request):
+        return await call_next(request)
+
+    next_url = request.url.path
+    if request.url.query:
+        next_url += "?" + request.url.query
+
+    return RedirectResponse(url=f"/login?next={quote(next_url, safe='')}", status_code=303)
+
+
+def login_page_html(next_url="/", error=""):
+    configured = auth_configured()
+    err_html = f"<div class='login-error'>{esc(error)}</div>" if error else ""
+    config_warning = "" if configured else """
+      <div class="login-warning">
+        Falta configurar <strong>ADMIN_PASSWORD</strong> en Render. Agrega la variable en Environment y vuelve a desplegar.
+      </div>
+    """
+    return f"""<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>CampoSeguro | Iniciar sesión</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {{ --verde-oscuro:#0f3023; --verde:#1f6f43; --verde-suave:#e9f5ee; --texto:#142026; }}
+* {{ box-sizing:border-box; }}
+body {{ margin:0; min-height:100vh; font-family:Inter,Arial,sans-serif; background:linear-gradient(135deg,#0f3023,#1f6f43); display:flex; align-items:center; justify-content:center; padding:24px; color:var(--texto); }}
+.login-card {{ width:100%; max-width:460px; background:white; border-radius:24px; padding:30px; box-shadow:0 24px 80px rgba(0,0,0,.25); }}
+.brand {{ color:#14532d; font-weight:900; font-size:32px; margin:0; letter-spacing:-.6px; }}
+.subtitle {{ color:#475569; margin:8px 0 24px; line-height:1.45; }}
+label {{ display:block; margin-top:14px; font-weight:800; }}
+input {{ width:100%; padding:13px; margin-top:6px; border:1px solid #cbd5e1; border-radius:12px; font-size:16px; }}
+button {{ width:100%; margin-top:22px; background:var(--verde); color:white; border:0; border-radius:14px; padding:14px; font-weight:900; font-size:16px; cursor:pointer; }}
+.login-error {{ background:#fee2e2; color:#991b1b; padding:12px; border-radius:12px; margin-bottom:14px; font-weight:700; }}
+.login-warning {{ background:#fff7ed; color:#92400e; padding:12px; border-left:5px solid #f97316; border-radius:12px; margin-bottom:14px; }}
+.help {{ margin-top:18px; font-size:13px; color:#64748b; line-height:1.45; }}
+</style>
+</head>
+<body>
+  <div class="login-card">
+    <h1 class="brand">CampoSeguro</h1>
+    <p class="subtitle">Acceso protegido a la plataforma de alerta temprana informativa de focos de calor.</p>
+    {config_warning}
+    {err_html}
+    <form method="post" action="/login">
+      <input type="hidden" name="next_url" value="{esc(safe_next_url(next_url))}">
+      <label>Usuario</label>
+      <input name="username" autocomplete="username" autofocus required>
+      <label>Contraseña</label>
+      <input name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Entrar</button>
+    </form>
+    <div class="help">CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales.</div>
+  </div>
+</body>
+</html>"""
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_get(request: Request, next: str = "/", error: str = ""):
+    if current_user(request):
+        return RedirectResponse(safe_next_url(next), status_code=303)
+    return login_page_html(next_url=next, error=error)
+
+
+@app.post("/login")
+def login_post(username: str = Form(...), password: str = Form(...), next_url: str = Form("/")):
+    next_url = safe_next_url(next_url)
+
+    if not auth_configured():
+        return RedirectResponse(url=f"/login?error={quote('ADMIN_PASSWORD no configurado en Render')}&next={quote(next_url, safe='')}", status_code=303)
+
+    if username == ADMIN_USER and hmac.compare_digest(password, ADMIN_PASSWORD):
+        response = RedirectResponse(next_url, status_code=303)
+        response.set_cookie(
+            AUTH_COOKIE_NAME,
+            make_session_token(username),
+            max_age=AUTH_SESSION_HOURS * 3600,
+            httponly=True,
+            secure=AUTH_COOKIE_SECURE,
+            samesite="lax",
+        )
+        return response
+
+    return RedirectResponse(url=f"/login?error={quote('Usuario o contraseña incorrectos')}&next={quote(next_url, safe='')}", status_code=303)
+
+
+@app.get("/logout")
+def logout():
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(AUTH_COOKIE_NAME)
+    return response
+
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok", "app": "CampoSeguro", "auth": AUTH_ENABLED}
+
 
 
 def esc(x):
@@ -159,6 +320,7 @@ pre {{ white-space:pre-wrap; background:#111827; color:#e5e7eb; padding:14px; bo
 <a href="/usuarios">Usuarios</a>
 <a href="/correos">Correos</a>
 <a href="/configuracion">Configuración</a>
+<a href="/logout">Salir</a>
 </nav>
 <main>{body}</main>
 <script>
@@ -1122,6 +1284,9 @@ def configuracion():
       <p><strong>Fuentes:</strong> {esc(FIRMS_SOURCES)}</p>
       <p><strong>Ubicación desde teléfono:</strong> disponible al crear o editar zonas.</p>
       <p><strong>Correo:</strong> EMAIL_ENABLED controla si se envían correos reales o se generan archivos outbox.</p>
+      <p><strong>Acceso protegido:</strong> {esc("Activado" if AUTH_ENABLED else "Desactivado")}</p>
+      <p><strong>Usuario administrador:</strong> {esc(ADMIN_USER)}</p>
+      <p><strong>Contraseña admin:</strong> {esc("Configurada" if ADMIN_PASSWORD else "Falta configurar")}</p>
       <p><a class="button light" href="/prueba-firms">Abrir prueba técnica FIRMS</a></p>
       <p>Para cambiar FIRMS, edita el archivo <strong>.env</strong> y vuelve a abrir CampoSeguro.</p>
     </div>
