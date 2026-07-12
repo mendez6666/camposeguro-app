@@ -19,18 +19,21 @@ from config import (
     AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS,
     CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME,
     DEFAULT_ZONE_RADIUS_KM, CLIENT_MIN_RADIUS_KM, CLIENT_MAX_RADIUS_KM,
-    EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE
+    EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE,
+    AUTO_MONITOR_ENABLED, AUTO_MONITOR_INTERVAL_MINUTES, AUTO_MONITOR_RUN_ON_STARTUP,
+    AUTO_MONITOR_START_DELAY_SECONDS, MONITOR_SECRET
 )
 from db import init_db, seed_demo_data, get_conn, rows_to_dicts
 from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
 from emailer import preparar_correos_pendientes, procesar_correos_pendientes, estadisticas_correos, listar_correos, smtp_config_ok
 from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
+from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.0")
+app = FastAPI(title="CampoSeguro v3.1")
 
 
-PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico"}
+PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico", "/cron/monitor"}
 CLIENT_ALLOWED_PREFIXES = ("/cliente",)
 CLIENT_ALLOWED_EXACT = {"/logout", "/healthz"}
 
@@ -363,6 +366,7 @@ pre {{ white-space:pre-wrap; background:#111827; color:#e5e7eb; padding:14px; bo
 <a href="/">Inicio</a>
 <a href="/mapa">Mapa</a>
 <a href="/resumen">Resumen</a>
+<a href="/monitor">Monitor</a>
 <a href="/reporte">Reporte</a>
 <a href="/alertas">Alertas</a>
 <a href="/zonas">Zonas</a>
@@ -425,6 +429,7 @@ def error_page(exc):
 def startup():
     init_db()
     seed_demo_data()
+    start_background_monitor()
 
 
 def stats():
@@ -894,6 +899,99 @@ def cliente_reporte():
 
 
 
+
+def render_monitor_status_card(status):
+    last_result = status.get("last_result") or {}
+    correos_proc = status.get("correos_procesados") or {}
+    success = status.get("last_success")
+    success_txt = "Sin ejecución todavía" if success is None else ("Correcto" if success else "Con error")
+    success_class = "ok" if success else ("notice" if success is None else "bad")
+
+    return f"""
+    <div class="card">
+      <h2>Monitoreo automático</h2>
+      <p><strong>Estado:</strong> {esc(success_txt)}</p>
+      <p><strong>Activo:</strong> {esc("Sí" if status.get("enabled") else "No")}</p>
+      <p><strong>Ejecutándose ahora:</strong> {esc("Sí" if status.get("running") else "No")}</p>
+      <p><strong>Intervalo:</strong> cada {esc(status.get("interval_minutes"))} minutos</p>
+      <p><strong>Última ejecución UTC:</strong> {esc(status.get("last_run_utc") or "Pendiente")}</p>
+      <p><strong>Último disparador:</strong> {esc(status.get("last_trigger") or "Ninguno")}</p>
+      <p><strong>Próxima referencia:</strong> {esc(status.get("next_run_hint") or "Pendiente")}</p>
+      <hr>
+      <p><strong>Focos descargados:</strong> {esc(last_result.get("focos_descargados", 0))}</p>
+      <p><strong>Focos nuevos guardados:</strong> {esc(last_result.get("focos_nuevos_guardados", 0))}</p>
+      <p><strong>Alertas recalculadas:</strong> {esc(last_result.get("alertas_totales", 0))}</p>
+      <p><strong>Correos preparados:</strong> {esc(status.get("correos_preparados", 0))}</p>
+      <p><strong>Correos procesados:</strong> {esc(correos_proc.get("procesados", 0))} |
+         enviados: {esc(correos_proc.get("enviados", 0))} |
+         outbox: {esc(correos_proc.get("outbox", 0))} |
+         errores: {esc(correos_proc.get("errores", 0))}</p>
+      <p><strong>SMTP activo:</strong> {esc("Sí" if status.get("smtp_active") else "No")}</p>
+    </div>
+    """
+
+
+@app.get("/monitor", response_class=HTMLResponse)
+def monitor_panel():
+    status = get_auto_monitor_status()
+    secret_status = "Configurado" if MONITOR_SECRET else "No configurado"
+    body = f"""
+    {render_monitor_status_card(status)}
+    <div class="card">
+      <h3>Acciones</h3>
+      <form method="post" action="/monitor/ejecutar" style="display:inline-block;">
+        <button type="submit">Ejecutar monitoreo ahora</button>
+      </form>
+      <a class="button light" href="/correos">Ver correos</a>
+      <a class="button light" href="/reporte">Ver reporte</a>
+    </div>
+    <div class="card">
+      <h3>Configuración automática</h3>
+      <p><strong>AUTO_MONITOR_ENABLED:</strong> {esc(AUTO_MONITOR_ENABLED)}</p>
+      <p><strong>AUTO_MONITOR_INTERVAL_MINUTES:</strong> {esc(AUTO_MONITOR_INTERVAL_MINUTES)}</p>
+      <p><strong>AUTO_MONITOR_RUN_ON_STARTUP:</strong> {esc(AUTO_MONITOR_RUN_ON_STARTUP)}</p>
+      <p><strong>AUTO_MONITOR_START_DELAY_SECONDS:</strong> {esc(AUTO_MONITOR_START_DELAY_SECONDS)}</p>
+      <p><strong>MONITOR_SECRET:</strong> {esc(secret_status)}</p>
+      <p class="notice">En Render gratis, si el servicio se duerme, el monitor interno se pausa. Para 24/7 barato, se puede usar luego un cron externo que llame a /cron/monitor con token secreto.</p>
+    </div>
+    """
+    return layout("Monitor automático", body)
+
+
+@app.post("/monitor/ejecutar", response_class=HTMLResponse)
+def monitor_ejecutar():
+    status = run_monitor_once(trigger="admin_button")
+    body = f"""
+    {render_monitor_status_card(status)}
+    <div class="card">
+      <p><a class="button" href="/monitor">Volver al monitor</a>
+      <a class="button light" href="/mapa">Ver mapa</a>
+      <a class="button light" href="/alertas">Ver alertas</a></p>
+    </div>
+    """
+    return layout("Monitor ejecutado", body)
+
+
+@app.get("/cron/monitor")
+def cron_monitor(token: str = ""):
+    if not MONITOR_SECRET or token != MONITOR_SECRET:
+        return {"ok": False, "error": "token inválido o MONITOR_SECRET no configurado"}
+    status = run_monitor_once(trigger="external_cron")
+    return {
+        "ok": bool(status.get("last_success")),
+        "running": status.get("running"),
+        "last_run_utc": status.get("last_run_utc"),
+        "focos_descargados": (status.get("last_result") or {}).get("focos_descargados", 0),
+        "focos_nuevos_guardados": (status.get("last_result") or {}).get("focos_nuevos_guardados", 0),
+        "alertas_totales": (status.get("last_result") or {}).get("alertas_totales", 0),
+        "correos_preparados": status.get("correos_preparados", 0),
+        "correos_procesados": status.get("correos_procesados", {}),
+        "error": status.get("last_error"),
+    }
+
+
+
+
 @app.get("/", response_class=HTMLResponse)
 def inicio():
     try:
@@ -909,6 +1007,7 @@ def inicio():
             <div class="quick-actions">
               <a class="button light" href="/usuarios">Usuarios</a>
               <a class="button light" href="/zonas">Zonas</a>
+              <a class="button light" href="/monitor">Monitor automático</a>
               <a class="button light" href="/reporte">Reporte operativo</a>
               <a class="button light" href="/correos">Correos</a>
             </div>
@@ -918,7 +1017,8 @@ def inicio():
             Llave FIRMS: {esc(key_status)}<br>
             Región API: Sudamérica / South_America<br>
             Área operativa: Bolivia<br>
-            Área operativa: Bolivia<br>Evaluación de alertas: últimas {esc(ALERT_EVALUATION_HOURS)} horas
+            Evaluación de alertas: últimas {esc(ALERT_EVALUATION_HOURS)} horas<br>
+            Monitor automático: {esc("Activo" if AUTO_MONITOR_ENABLED else "Desactivado")} / cada {esc(AUTO_MONITOR_INTERVAL_MINUTES)} min
           </div>
         </section>
 
@@ -969,7 +1069,7 @@ def actualizar():
           <p><strong>Alertas totales recalculadas:</strong> {esc(r['alertas_totales'])}</p>
           <p><strong>Correos preparados:</strong> {esc(nuevos_correos)}</p>
           <p><strong>Fecha UTC:</strong> {esc(r['fecha_utc'])}</p>
-          <p><a class="button" href="/mapa">Ver mapa</a> <a class="button light" href="/alertas">Ver alertas</a> <a class="button light" href="/correos">Ver correos</a></p>
+          <p><a class="button" href="/mapa">Ver mapa</a> <a class="button light" href="/alertas">Ver alertas</a> <a class="button light" href="/correos">Ver correos</a> <a class="button light" href="/monitor">Ver monitor</a></p>
         </div>{detail}
         """
         return layout("Resultado", body)
@@ -1942,6 +2042,7 @@ def configuracion():
       <p><strong>Correo:</strong> EMAIL_ENABLED controla si se envían correos reales o se generan archivos outbox.</p>
       <p><strong>Control anti-saturación:</strong> correos desde nivel {esc(EMAIL_MIN_LEVEL)}, máximo {esc(EMAIL_MAX_PER_ZONE)} alerta(s) por zona.</p>
       <p><strong>Radio recomendado:</strong> {esc(DEFAULT_ZONE_RADIUS_KM)} km</p>
+      <p><strong>Monitoreo automático:</strong> {esc("Activado" if AUTO_MONITOR_ENABLED else "Desactivado")} cada {esc(AUTO_MONITOR_INTERVAL_MINUTES)} minutos</p>
       <p><strong>Acceso protegido:</strong> {esc("Activado" if AUTH_ENABLED else "Desactivado")}</p>
       <p><strong>Usuario administrador:</strong> {esc(ADMIN_USER)}</p>
       <p><strong>Usuario cliente:</strong> {esc(CLIENT_USER)}</p>

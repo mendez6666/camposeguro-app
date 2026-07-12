@@ -159,3 +159,30 @@ EMAIL_MAX_PER_ZONE=1
 Nota sobre correos:
 - `EMAIL_ENABLED=false` no envía correos reales. Solo prepara/genera outbox.
 - Para correo real faltan variables SMTP: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM.
+## Versión 3.1 - Monitoreo automático
+
+Cambios principales:
+- Se agrega monitor automático interno.
+- Se agrega panel administrativo `/monitor`.
+- Se agrega endpoint protegido para cron externo: `/cron/monitor?token=TU_TOKEN`.
+- El monitor ejecuta:
+  1. Consulta FIRMS.
+  2. Guarda focos nuevos.
+  3. Recalcula alertas.
+  4. Prepara correos.
+  5. Procesa correos: envía si SMTP está activo o genera outbox si SMTP no está activo.
+
+Variables nuevas recomendadas en Render:
+```env
+AUTO_MONITOR_ENABLED=true
+AUTO_MONITOR_INTERVAL_MINUTES=180
+AUTO_MONITOR_RUN_ON_STARTUP=true
+AUTO_MONITOR_START_DELAY_SECONDS=45
+MONITOR_SECRET=elige_un_token_largo_para_cron
+```
+
+Nota importante para Render Free:
+- El monitor interno funciona mientras el servicio está despierto.
+- Si Render duerme el servicio por inactividad, el monitor se pausa.
+- Para monitoreo 24/7 económico, usar después un cron externo gratuito que visite:
+  `https://app.camposeguro.app/cron/monitor?token=TU_TOKEN`
