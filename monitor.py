@@ -2,7 +2,7 @@ import math
 from datetime import datetime, timezone, timedelta
 from firms_api import fetch_auto_scz_bolivia
 from db import get_conn
-from config import ALERT_WINDOW_HOURS
+from config import ALERT_WINDOW_HOURS, ALERT_EVALUATION_HOURS
 
 
 def now_utc():
@@ -83,9 +83,9 @@ def insert_alerta(conn, zona, foco_id, distancia_km):
 
 def recalcular_alertas_existentes():
     """
-    Recalcula alertas solamente con focos recientes.
-    Aunque se descarguen 5 días como respaldo técnico, las alertas tempranas
-    se generan solo dentro de ALERT_WINDOW_HOURS.
+    Recalcula alertas operativas con la ventana de evaluación configurada.
+    La descarga FIRMS puede traer varios días; para no perder focos dentro de zonas,
+    las alertas se calculan con ALERT_EVALUATION_HOURS.
     """
     conn = get_conn()
     conn.execute("DELETE FROM alertas")
@@ -94,7 +94,7 @@ def recalcular_alertas_existentes():
     total = 0
 
     for foco in focos:
-        if not foco_en_ventana_alerta(foco, ALERT_WINDOW_HOURS):
+        if not foco_en_ventana_alerta(foco, ALERT_EVALUATION_HOURS):
             continue
         for zona in zonas:
             dist = haversine_km(zona["latitud"], zona["longitud"], foco["latitude"], foco["longitude"])
@@ -129,7 +129,8 @@ def run_monitoring():
         "reports": reports,
         "strategy_info": strategy_info,
         "fecha_utc": now_utc(),
-        "alert_window_hours": ALERT_WINDOW_HOURS
+        "alert_window_hours": ALERT_WINDOW_HOURS,
+        "alert_evaluation_hours": ALERT_EVALUATION_HOURS
     }
 
 

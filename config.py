@@ -36,6 +36,8 @@ FIRMS_AREA_BBOX = os.getenv("FIRMS_AREA_BBOX", "-64.9,-20.6,-57.0,-13.0").strip(
 FIRMS_DAY_RANGE = int(os.getenv("FIRMS_DAY_RANGE", "1"))
 FIRMS_QUERY_DAYS = int(os.getenv("FIRMS_QUERY_DAYS", "5"))
 ALERT_WINDOW_HOURS = int(os.getenv("ALERT_WINDOW_HOURS", "24"))
+# Ventana para recalcular alertas operativas. Por defecto 5 días.
+ALERT_EVALUATION_HOURS = int(os.getenv("ALERT_EVALUATION_HOURS", str(FIRMS_QUERY_DAYS * 24)))
 FIRMS_SOURCES = [
     x.strip() for x in os.getenv(
         "FIRMS_SOURCES",

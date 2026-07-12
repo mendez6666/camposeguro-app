@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import html
 import json
 import traceback
+import math
 import time
 import hmac
 import hashlib
@@ -15,7 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from config import (
     FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCES,
     AUTH_ENABLED, ADMIN_USER, ADMIN_PASSWORD, SESSION_SECRET,
-    AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS
+    AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS
 )
 from db import init_db, seed_demo_data, get_conn, rows_to_dicts
 from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
@@ -23,7 +24,7 @@ from emailer import preparar_correos_pendientes, procesar_correos_pendientes, es
 from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 
 
-app = FastAPI(title="CampoSeguro v2.5")
+app = FastAPI(title="CampoSeguro v2.7")
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico"}
@@ -402,7 +403,7 @@ def inicio():
         <section class="hero">
           <div>
             <h2>Monitoreo de fuego cercano</h2>
-            <p>Registra usuarios y zonas de interés. CampoSeguro consulta FIRMS y prioriza alertas recientes para seguimiento preventivo.</p>
+            <p>Registra usuarios y zonas de interés. CampoSeguro consulta FIRMS y prioriza alertas operativas para seguimiento preventivo.</p>
             <form method="post" action="/actualizar" style="display:inline-block;"><button type="submit">Actualizar monitoreo</button></form>
             <a class="button light" href="/mapa">Ver mapa</a>
             <div class="quick-actions">
@@ -417,7 +418,7 @@ def inicio():
             Llave FIRMS: {esc(key_status)}<br>
             Región API: Sudamérica / South_America<br>
             Área operativa: Bolivia<br>
-            Rango: últimos {esc(FIRMS_DAY_RANGE)} día(s)
+            Área operativa: Bolivia<br>Evaluación de alertas: últimas {esc(ALERT_EVALUATION_HOURS)} horas
           </div>
         </section>
 
@@ -482,6 +483,49 @@ def limpiar():
     return RedirectResponse("/", status_code=303)
 
 
+
+
+def distancia_km_simple(lat1, lon1, lat2, lon2):
+    r = 6371.0088
+    phi1 = math.radians(float(lat1))
+    phi2 = math.radians(float(lat2))
+    dphi = math.radians(float(lat2) - float(lat1))
+    dlambda = math.radians(float(lon2) - float(lon1))
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * r * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def focos_contexto_por_zonas(focos, zonas, margen_km=60):
+    contexto = []
+    vistos = set()
+
+    for f in focos:
+        mejor_dist = None
+        mejor_zona = None
+
+        for z in zonas:
+            try:
+                dist = distancia_km_simple(z["latitud"], z["longitud"], f["latitude"], f["longitude"])
+                radio_contexto = float(z["radio_km"]) + float(margen_km)
+                if dist <= radio_contexto and (mejor_dist is None or dist < mejor_dist):
+                    mejor_dist = dist
+                    mejor_zona = z
+            except Exception:
+                continue
+
+        if mejor_zona:
+            key = f.get("id") or f'{f.get("fuente")}_{f.get("latitude")}_{f.get("longitude")}_{f.get("acq_date")}_{f.get("acq_time")}'
+            if key in vistos:
+                continue
+            vistos.add(key)
+            row = dict(f)
+            row["distancia_zona_km"] = round(mejor_dist, 2)
+            row["zona_cercana"] = mejor_zona.get("nombre_zona", "")
+            contexto.append(row)
+
+    return contexto
+
+
 @app.get("/mapa", response_class=HTMLResponse)
 def mapa():
     try:
@@ -491,45 +535,59 @@ def mapa():
             FROM zonas z LEFT JOIN usuarios u ON u.id=z.usuario_id
             WHERE z.activa=1
         """).fetchall())
-        focos = rows_to_dicts(conn.execute("SELECT * FROM focos ORDER BY acq_date DESC, acq_time DESC LIMIT 5000").fetchall())
+
+        focos = rows_to_dicts(conn.execute("""
+            SELECT * FROM focos
+            ORDER BY acq_date DESC, acq_time DESC
+            LIMIT 10000
+        """).fetchall())
+
         alertas = rows_to_dicts(conn.execute("""
             SELECT a.*, z.nombre_zona, f.latitude, f.longitude, f.acq_date, f.acq_time, f.fuente
-            FROM alertas a JOIN zonas z ON z.id=a.zona_id JOIN focos f ON f.id=a.foco_id
+            FROM alertas a
+            JOIN zonas z ON z.id=a.zona_id
+            JOIN focos f ON f.id=a.foco_id
             ORDER BY
               CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END,
               a.distancia_km ASC
-            LIMIT 1500
+            LIMIT 2500
         """).fetchall())
         conn.close()
+
+        focos_contexto = focos_contexto_por_zonas(focos, zonas, margen_km=60)
 
         body = f"""
         <style>
         main {{ padding:0; }}
         #map {{ height:calc(100vh - 126px); width:100%; }}
-        .panel {{ position:absolute; z-index:1000; background:white; padding:14px 16px; top:148px; left:16px; border-radius:16px; box-shadow:0 8px 28px rgba(0,0,0,.2); max-width:330px; }}
+        .panel {{ position:absolute; z-index:1000; background:white; padding:14px 16px; top:148px; left:16px; border-radius:16px; box-shadow:0 8px 28px rgba(0,0,0,.2); max-width:370px; }}
         .legend-dot {{ display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; }}
+        .active-mode {{ background:#dcfce7; color:#14532d; padding:6px 8px; border-radius:8px; display:inline-block; margin-top:8px; font-weight:800; }}
         </style>
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
         <div class="panel">
           <strong>CampoSeguro</strong><br>
           Zonas: {len(zonas)}<br>
-          Focos descargados: {len(focos)}<br>
-          Alertas 24h: {len(alertas)}<hr>
-          <span class="legend-dot" style="background:#7f1d1d"></span>Alerta prioritaria<br>
-          <span class="legend-dot" style="background:#2563eb"></span>Zona monitoreada<br>
+          Focos Bolivia: {len(focos)}<br>
+          Focos cercanos/contexto: {len(focos_contexto)}<br>
+          Alertas período: {len(alertas)}<hr>
           <span class="legend-dot" style="background:#f97316"></span>Foco MODIS<br>
-          <span class="legend-dot" style="background:#dc2626"></span>Foco VIIRS
+          <span class="legend-dot" style="background:#dc2626"></span>Foco VIIRS<br>
+          <span class="legend-dot" style="background:#7f1d1d"></span>Alerta dentro de zona<br>
+          <span class="legend-dot" style="background:#2563eb"></span>Zona monitoreada<br>
+          <div id="mode-label" class="active-mode">Vista operativa</div>
         </div>
 
         <div class="map-toolbar">
           <strong>Capas del mapa</strong><br>
-          <button class="lightbtn" onclick="soloAlertas()">Solo alertas</button>
-          <button class="lightbtn" onclick="mostrarZonas()">Zonas</button>
-          <button class="lightbtn" onclick="mostrarFocos()">Focos</button>
+          <button class="lightbtn" onclick="vistaOperativa()">Vista operativa</button>
+          <button class="lightbtn" onclick="vistaBolivia()">Bolivia completa</button>
+          <button class="lightbtn" onclick="vistaZonas()">Zonas + focos</button>
+          <button class="lightbtn" onclick="vistaAlertas()">Alertas + focos</button>
           <button class="lightbtn" onclick="mostrarTodo()">Todo</button>
           <button class="secondary" onclick="limpiarFocos()">Limpiar focos</button>
           <div class="map-status">
-            Vista inicial recomendada: solo zonas y alertas. Los focos generales se pueden activar para análisis técnico.
+            Zonas + focos muestra focos cercanos. Alertas + focos muestra focos dentro de zona y contexto cercano.
           </div>
         </div>
 
@@ -538,12 +596,23 @@ def mapa():
         <script>
         const zonas = {json.dumps(zonas)};
         const focos = {json.dumps(focos)};
+        const focosContexto = {json.dumps(focos_contexto)};
         const alertas = {json.dumps(alertas)};
-        const map = L.map('map').setView([-17.8, -61.5], 7);
+
+        const canvasRenderer = L.canvas({{ padding: 0.5 }});
+        const map = L.map('map').setView([-16.6, -64.5], 6);
         L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{ maxZoom:19, attribution:'&copy; OpenStreetMap' }}).addTo(map);
 
+        map.createPane('focosPane');
+        map.getPane('focosPane').style.zIndex = 420;
+        map.createPane('zonasPane');
+        map.getPane('zonasPane').style.zIndex = 500;
+        map.createPane('alertasPane');
+        map.getPane('alertasPane').style.zIndex = 650;
+
         const layerZonas = L.layerGroup().addTo(map);
-        const layerFocos = L.layerGroup();
+        const layerFocosBolivia = L.layerGroup();
+        const layerFocosContexto = L.layerGroup().addTo(map);
         const layerAlertas = L.layerGroup().addTo(map);
 
         function nivelColor(nivel) {{
@@ -552,49 +621,130 @@ def mapa():
           return '#2563eb';
         }}
 
+        function focoColor(fuente) {{
+          return (fuente || '').includes('VIIRS') ? '#dc2626' : '#f97316';
+        }}
+
+        function setMode(text) {{
+          const el = document.getElementById('mode-label');
+          if (el) el.innerText = text;
+        }}
+
         zonas.forEach(z => {{
-          L.circle([z.latitud, z.longitud], {{ radius:z.radio_km*1000, color:'#2563eb', weight:3, fillOpacity:0.035 }})
-            .addTo(layerZonas).bindPopup(`<b>Zona:</b> ${{z.nombre_zona}}<br><b>Usuario:</b> ${{z.usuario_nombre || 'Sin usuario'}}<br><b>Radio:</b> ${{z.radio_km}} km`);
-          L.marker([z.latitud, z.longitud]).addTo(layerZonas).bindPopup(`<b>Zona:</b> ${{z.nombre_zona}}`);
+          L.circle([z.latitud, z.longitud], {{
+            pane:'zonasPane',
+            radius:z.radio_km*1000,
+            color:'#2563eb',
+            weight:3,
+            fillOpacity:0.035
+          }})
+          .addTo(layerZonas)
+          .bindPopup(`<b>Zona:</b> ${{z.nombre_zona}}<br><b>Usuario:</b> ${{z.usuario_nombre || 'Sin usuario'}}<br><b>Radio alerta:</b> ${{z.radio_km}} km`);
+
+          L.marker([z.latitud, z.longitud])
+            .addTo(layerZonas)
+            .bindPopup(`<b>Zona:</b> ${{z.nombre_zona}}`);
         }});
 
         focos.forEach(f => {{
-          const color = (f.fuente || '').includes('VIIRS') ? '#dc2626' : '#f97316';
-          L.circleMarker([f.latitude, f.longitude], {{ radius:4, color:color, fillColor:color, fillOpacity:0.65, weight:1 }})
-            .addTo(layerFocos).bindPopup(`<b>Foco de calor</b><br>${{f.fuente}}<br>${{f.acq_date}} ${{f.acq_time}}<br>FRP: ${{f.frp || ''}}`);
+          const color = focoColor(f.fuente);
+          L.circleMarker([f.latitude, f.longitude], {{
+            renderer: canvasRenderer,
+            pane:'focosPane',
+            radius:3,
+            color:color,
+            fillColor:color,
+            fillOpacity:0.42,
+            opacity:0.62,
+            weight:1
+          }})
+          .addTo(layerFocosBolivia)
+          .bindPopup(`<b>Foco Bolivia</b><br>${{f.fuente}}<br>${{f.acq_date}} ${{f.acq_time}}<br>FRP: ${{f.frp || ''}}`);
+        }});
+
+        focosContexto.forEach(f => {{
+          const color = focoColor(f.fuente);
+          L.circleMarker([f.latitude, f.longitude], {{
+            renderer: canvasRenderer,
+            pane:'focosPane',
+            radius:6,
+            color:color,
+            fillColor:color,
+            fillOpacity:0.85,
+            opacity:0.95,
+            weight:1
+          }})
+          .addTo(layerFocosContexto)
+          .bindPopup(`<b>Foco cercano/contexto</b><br>${{f.fuente}}<br>${{f.acq_date}} ${{f.acq_time}}<br><b>Zona cercana:</b> ${{f.zona_cercana || ''}}<br><b>Distancia a zona:</b> ${{f.distancia_zona_km || ''}} km<br>FRP: ${{f.frp || ''}}`);
         }});
 
         alertas.forEach(a => {{
           const color = nivelColor(a.nivel);
-          L.circleMarker([a.latitude, a.longitude], {{ radius:11, color:color, fillColor:color, fillOpacity:0.92, weight:2 }})
-            .addTo(layerAlertas).bindPopup(`<b>ALERTA ${{a.nivel}}</b><br>${{a.nombre_zona}}<br>Distancia: ${{a.distancia_km}} km<br>${{a.fuente}}<br>${{a.acq_date}} ${{a.acq_time}}`);
+          L.circleMarker([a.latitude, a.longitude], {{
+            pane:'alertasPane',
+            radius:13,
+            color:color,
+            fillColor:color,
+            fillOpacity:0.95,
+            opacity:1,
+            weight:3
+          }})
+          .addTo(layerAlertas)
+          .bindPopup(`<b>ALERTA ${{a.nivel}}</b><br>${{a.nombre_zona}}<br>Distancia: ${{a.distancia_km}} km<br>${{a.fuente}}<br>${{a.acq_date}} ${{a.acq_time}}`);
         }});
 
         function addIfMissing(layer) {{ if (!map.hasLayer(layer)) map.addLayer(layer); }}
         function removeIfPresent(layer) {{ if (map.hasLayer(layer)) map.removeLayer(layer); }}
 
-        function soloAlertas() {{
+        function vistaOperativa() {{
           addIfMissing(layerZonas);
           addIfMissing(layerAlertas);
-          removeIfPresent(layerFocos);
+          addIfMissing(layerFocosContexto);
+          removeIfPresent(layerFocosBolivia);
+          setMode('Vista operativa');
         }}
-        function mostrarZonas() {{
+
+        function vistaBolivia() {{
           addIfMissing(layerZonas);
+          addIfMissing(layerAlertas);
+          addIfMissing(layerFocosBolivia);
+          removeIfPresent(layerFocosContexto);
+          setMode('Bolivia completa');
         }}
-        function mostrarFocos() {{
-          addIfMissing(layerFocos);
+
+        function vistaZonas() {{
+          addIfMissing(layerZonas);
+          addIfMissing(layerFocosContexto);
+          removeIfPresent(layerAlertas);
+          removeIfPresent(layerFocosBolivia);
+          setMode('Zonas + focos cercanos');
         }}
-        function limpiarFocos() {{
-          removeIfPresent(layerFocos);
+
+        function vistaAlertas() {{
+          addIfMissing(layerZonas);
+          addIfMissing(layerAlertas);
+          addIfMissing(layerFocosContexto);
+          removeIfPresent(layerFocosBolivia);
+          setMode('Alertas + focos cercanos');
         }}
+
         function mostrarTodo() {{
           addIfMissing(layerZonas);
           addIfMissing(layerAlertas);
-          addIfMissing(layerFocos);
+          addIfMissing(layerFocosContexto);
+          addIfMissing(layerFocosBolivia);
+          setMode('Todo visible');
         }}
 
-        // Vista inicial profesional: zonas + alertas, sin saturar con todos los focos generales.
-        soloAlertas();
+        function limpiarFocos() {{
+          addIfMissing(layerZonas);
+          addIfMissing(layerAlertas);
+          removeIfPresent(layerFocosContexto);
+          removeIfPresent(layerFocosBolivia);
+          setMode('Focos ocultos');
+        }}
+
+        vistaOperativa();
         </script>
         """
         return layout("Mapa", body)
@@ -1263,7 +1413,7 @@ def landing():
       </div>
       <div class="public-note">
         <strong>Funciones principales</strong><br>
-        Monitoreo FIRMS, zonas con radio configurable, alertas recientes, reporte operativo y mensajes listos para comunicación preventiva.
+        Monitoreo FIRMS, zonas con radio configurable, alertas operativas, reporte operativo y mensajes listos para comunicación preventiva.
       </div>
     </section>
     """

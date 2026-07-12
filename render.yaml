@@ -12,6 +12,8 @@ services:
         value: "5"
       - key: ALERT_WINDOW_HOURS
         value: "24"
+      - key: ALERT_EVALUATION_HOURS
+        value: "120"
       - key: FIRMS_AREA_BBOX
         value: "-70.0,-23.5,-57.0,-9.0"
       - key: FIRMS_SOURCES

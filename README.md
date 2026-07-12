@@ -105,11 +105,15 @@ AUTH_SESSION_HOURS=12
 Importante:
 - No subas la contraseña real a GitHub.
 - La contraseña debe configurarse en Render → Environment.
-## Versión 2.6 - Botones de mapa corregidos
+## Versión 2.7 - Alertas por período y mapa corregido
 
-Cambio principal:
-- El botón "Zonas + focos" muestra zonas y focos cercanos.
-- El botón "Alertas + focos" muestra alertas, zonas y focos cercanos.
-- La vista operativa abre con zonas + alertas + focos cercanos.
-- La vista Bolivia muestra todos los focos regionales descargados.
-- Esto permite interpretar de dónde puede venir el fuego sin perder el panorama nacional.
+Cambios principales:
+- Las alertas se recalculan con `ALERT_EVALUATION_HOURS`, por defecto 120 horas.
+- Esto evita que focos descargados dentro de una zona queden sin alerta solo por estar fuera de 24h.
+- El mapa separa correctamente:
+  - Vista operativa: zonas + alertas + focos cercanos.
+  - Bolivia completa: todos los focos descargados + zonas + alertas.
+  - Zonas + focos: zonas + focos cercanos.
+  - Alertas + focos: alertas + zonas + focos cercanos.
+  - Todo: todas las capas.
+- Mantiene login básico de v2.5.
