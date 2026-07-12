@@ -24,6 +24,10 @@ services:
         value: "true"
       - key: ADMIN_USER
         value: "admin"
+      - key: CLIENT_USER
+        value: "cliente"
+      - key: CLIENT_NAME
+        value: "Cliente CampoSeguro"
       - key: AUTH_COOKIE_SECURE
         value: "true"
       - key: AUTH_SESSION_HOURS

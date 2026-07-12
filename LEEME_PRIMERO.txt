@@ -109,3 +109,30 @@ Cambio principal:
 - Las alertas quedan en las pestañas Alertas y Reporte, no mezcladas como puntos en el mapa.
 - Las zonas se muestran como círculos azules con centro pequeño.
 - Los focos se muestran como puntos FIRMS MODIS/VIIRS.
+## Versión 2.9 - Modo administrador y modo cliente
+
+Cambio principal:
+- Se agregan dos tipos de acceso:
+  - Administrador: panel completo.
+  - Cliente: vista simple y solo lectura.
+
+Variables nuevas recomendadas en Render:
+```env
+CLIENT_USER=cliente
+CLIENT_PASSWORD=elige_una_contrasena_cliente
+CLIENT_NAME=Cliente CampoSeguro
+```
+
+Rutas cliente:
+- `/cliente`
+- `/cliente/mapa`
+- `/cliente/alertas`
+- `/cliente/reporte`
+
+El cliente no puede acceder a:
+- Usuarios
+- Zonas de edición
+- Configuración
+- Correos
+- Actualizar monitoreo
+- Prueba FIRMS

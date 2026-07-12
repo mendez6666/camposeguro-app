@@ -65,5 +65,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "").strip()
 SESSION_SECRET = os.getenv("SESSION_SECRET", ADMIN_PASSWORD or "cambia_este_secreto_en_render").strip()
 AUTH_COOKIE_NAME = os.getenv("AUTH_COOKIE_NAME", "camposeguro_session").strip()
 AUTH_COOKIE_SECURE = env_bool("AUTH_COOKIE_SECURE", "true")
-AUTH_SESSION_HOURS = int(os.getenv("AUTH_SESSION_HOURS", "12"))
-
+AUTH_SESSION_HOURS = int(os.getenv("AUTH_SESSION_HOURS", "12"))# Acceso de cliente / vista solo lectura
+CLIENT_USER = os.getenv("CLIENT_USER", "cliente").strip()
+CLIENT_PASSWORD = os.getenv("CLIENT_PASSWORD", "").strip()
+CLIENT_NAME = os.getenv("CLIENT_NAME", "Cliente CampoSeguro").strip()

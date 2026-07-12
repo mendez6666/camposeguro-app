@@ -16,7 +16,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from config import (
     FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCES,
     AUTH_ENABLED, ADMIN_USER, ADMIN_PASSWORD, SESSION_SECRET,
-    AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS
+    AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS,
+    CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME
 )
 from db import init_db, seed_demo_data, get_conn, rows_to_dicts
 from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
@@ -24,36 +25,51 @@ from emailer import preparar_correos_pendientes, procesar_correos_pendientes, es
 from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 
 
-app = FastAPI(title="CampoSeguro v2.8")
+app = FastAPI(title="CampoSeguro v2.9")
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico"}
+CLIENT_ALLOWED_PREFIXES = ("/cliente",)
+CLIENT_ALLOWED_EXACT = {"/logout", "/healthz"}
 
 
 def auth_configured():
     return bool(ADMIN_PASSWORD)
 
 
-def make_session_token(username: str) -> str:
+def client_configured():
+    return bool(CLIENT_PASSWORD)
+
+
+def make_session_token(username: str, role: str) -> str:
     exp = int(time.time()) + (AUTH_SESSION_HOURS * 3600)
-    msg = f"{username}:{exp}"
+    msg = f"{role}|{username}|{exp}"
     sig = hmac.new(SESSION_SECRET.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
-    return f"{username}:{exp}:{sig}"
+    return f"{role}|{username}|{exp}|{sig}"
 
 
 def verify_session_token(token: str):
     try:
-        username, exp_raw, sig = token.split(":", 2)
+        role, username, exp_raw, sig = token.split("|", 3)
         exp = int(exp_raw)
         if exp < int(time.time()):
             return None
-        if username != ADMIN_USER:
+
+        if role not in ["admin", "cliente"]:
             return None
-        msg = f"{username}:{exp}"
+
+        if role == "admin" and username != ADMIN_USER:
+            return None
+
+        if role == "cliente" and username != CLIENT_USER:
+            return None
+
+        msg = f"{role}|{username}|{exp}"
         expected = hmac.new(SESSION_SECRET.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return None
-        return username
+
+        return {"username": username, "role": role}
     except Exception:
         return None
 
@@ -63,10 +79,28 @@ def current_user(request: Request):
     return verify_session_token(token) if token else None
 
 
+def is_client_allowed_path(path: str) -> bool:
+    if path in CLIENT_ALLOWED_EXACT:
+        return True
+    return path.startswith(CLIENT_ALLOWED_PREFIXES)
+
+
 def safe_next_url(next_url: str) -> str:
     if not next_url or not next_url.startswith("/") or next_url.startswith("//"):
         return "/"
     return next_url
+
+
+def authenticate_credentials(username: str, password: str):
+    username = (username or "").strip()
+
+    if ADMIN_PASSWORD and username == ADMIN_USER and hmac.compare_digest(password, ADMIN_PASSWORD):
+        return {"username": ADMIN_USER, "role": "admin"}
+
+    if CLIENT_PASSWORD and username == CLIENT_USER and hmac.compare_digest(password, CLIENT_PASSWORD):
+        return {"username": CLIENT_USER, "role": "cliente"}
+
+    return None
 
 
 @app.middleware("http")
@@ -79,7 +113,10 @@ async def auth_guard(request: Request, call_next):
     if path in PUBLIC_PATHS or path.startswith("/login"):
         return await call_next(request)
 
-    if current_user(request):
+    user = current_user(request)
+    if user:
+        if user["role"] == "cliente" and not is_client_allowed_path(path):
+            return RedirectResponse(url="/cliente", status_code=303)
         return await call_next(request)
 
     next_url = request.url.path
@@ -94,7 +131,7 @@ def login_page_html(next_url="/", error=""):
     err_html = f"<div class='login-error'>{esc(error)}</div>" if error else ""
     config_warning = "" if configured else """
       <div class="login-warning">
-        Falta configurar <strong>ADMIN_PASSWORD</strong> en Render. Agrega la variable en Environment y vuelve a desplegar.
+        Falta configurar <strong>ADMIN_PASSWORD</strong> en Render. Para acceso de cliente, configura también <strong>CLIENT_PASSWORD</strong>.
       </div>
     """
     return f"""<!doctype html>
@@ -132,7 +169,7 @@ button {{ width:100%; margin-top:22px; background:var(--verde); color:white; bor
       <input name="password" type="password" autocomplete="current-password" required>
       <button type="submit">Entrar</button>
     </form>
-    <div class="help">CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales.</div>
+    <div class="help">Administrador: panel completo. Cliente: vista simple y solo lectura. CampoSeguro es una herramienta informativa.</div>
   </div>
 </body>
 </html>"""
@@ -140,7 +177,10 @@ button {{ width:100%; margin-top:22px; background:var(--verde); color:white; bor
 
 @app.get("/login", response_class=HTMLResponse)
 def login_get(request: Request, next: str = "/", error: str = ""):
-    if current_user(request):
+    user = current_user(request)
+    if user:
+        if user["role"] == "cliente":
+            return RedirectResponse("/cliente", status_code=303)
         return RedirectResponse(safe_next_url(next), status_code=303)
     return login_page_html(next_url=next, error=error)
 
@@ -152,11 +192,17 @@ def login_post(username: str = Form(...), password: str = Form(...), next_url: s
     if not auth_configured():
         return RedirectResponse(url=f"/login?error={quote('ADMIN_PASSWORD no configurado en Render')}&next={quote(next_url, safe='')}", status_code=303)
 
-    if username == ADMIN_USER and hmac.compare_digest(password, ADMIN_PASSWORD):
-        response = RedirectResponse(next_url, status_code=303)
+    user = authenticate_credentials(username, password)
+
+    if user:
+        destination = next_url
+        if user["role"] == "cliente":
+            destination = "/cliente"
+
+        response = RedirectResponse(destination, status_code=303)
         response.set_cookie(
             AUTH_COOKIE_NAME,
-            make_session_token(username),
+            make_session_token(user["username"], user["role"]),
             max_age=AUTH_SESSION_HOURS * 3600,
             httponly=True,
             secure=AUTH_COOKIE_SECURE,
@@ -392,6 +438,376 @@ def stats():
     }
     conn.close()
     return data
+
+
+
+def layout_cliente(title, body):
+    return f"""<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>{esc(title)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root {{
+  --verde-oscuro:#0f3023; --verde:#1f6f43; --verde-suave:#e9f5ee;
+  --gris:#f4f6f7; --texto:#142026; --fuego:#f97316; --rojo:#dc2626; --azul:#2563eb;
+}}
+* {{ box-sizing:border-box; }}
+body {{ margin:0; font-family:Inter,Arial,sans-serif; background:var(--gris); color:var(--texto); }}
+header {{ background:linear-gradient(135deg,#0f3023,#1f6f43); color:white; padding:24px 28px 18px; }}
+header h1 {{ margin:0; font-size:30px; letter-spacing:-.5px; }}
+header p {{ margin:6px 0 0; opacity:.92; }}
+nav {{ background:#184a34; padding:12px 28px; display:flex; gap:18px; flex-wrap:wrap; }}
+nav a {{ color:white; text-decoration:none; font-weight:800; }}
+main {{ padding:24px 28px; }}
+.card {{ background:white; border-radius:18px; padding:22px; margin-bottom:18px; box-shadow:0 6px 24px rgba(0,0,0,.08); }}
+.hero {{ background:white; border-radius:20px; padding:28px; margin-bottom:20px; box-shadow:0 8px 30px rgba(0,0,0,.08); }}
+.hero h2 {{ margin:0 0 10px; font-size:30px; }}
+.grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:16px; }}
+.metric-label {{ color:#52616a; font-weight:800; font-size:14px; }}
+.metric {{ font-size:34px; font-weight:900; margin-top:6px; }}
+.button {{ background:var(--verde); color:white; border:0; border-radius:12px; padding:12px 18px; font-weight:900; cursor:pointer; text-decoration:none; display:inline-block; }}
+.button.light {{ background:var(--verde-suave); color:#14532d; }}
+table {{ border-collapse:collapse; width:100%; background:white; }}
+th,td {{ border-bottom:1px solid #e5e7eb; text-align:left; padding:10px; font-size:13px; }}
+th {{ background:#eef5f0; }}
+.badge {{ padding:5px 10px; border-radius:999px; font-weight:900; font-size:12px; }}
+.CRITICO {{ background:#fee2e2; color:#991b1b; }}
+.ATENCION {{ background:#fef3c7; color:#92400e; }}
+.INFORMATIVO {{ background:#dbeafe; color:#1e40af; }}
+.notice {{ background:#fff7ed; border-left:5px solid var(--fuego); padding:14px; border-radius:12px; margin-bottom:16px; }}
+.alert-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; }}
+.alert-card {{ border-radius:18px; padding:18px; background:white; box-shadow:0 6px 24px rgba(0,0,0,.08); border-left:8px solid #2563eb; }}
+.alert-card.CRITICO {{ border-left-color:#991b1b; }}
+.alert-card.ATENCION {{ border-left-color:#d97706; }}
+.alert-card.INFORMATIVO {{ border-left-color:#2563eb; }}
+.alert-title {{ display:flex; justify-content:space-between; gap:10px; align-items:center; margin-bottom:12px; }}
+.alert-title h3 {{ margin:0; font-size:21px; }}
+.alert-meta {{ display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; margin:12px 0; font-size:14px; }}
+.alert-meta div {{ background:#f8fafc; padding:9px; border-radius:10px; }}
+.message-box {{ background:#f8fafc; border:1px solid #dbe3ea; border-radius:12px; padding:12px; margin-top:12px; font-size:13px; line-height:1.45; }}
+@media(max-width:900px) {{ main {{ padding:16px; }} header,nav {{ padding-left:16px; padding-right:16px; }} }}
+</style>
+</head>
+<body>
+<header><h1>CampoSeguro</h1><p>Vista cliente: seguimiento informativo de focos de calor</p></header>
+<nav>
+<a href="/cliente">Inicio</a>
+<a href="/cliente/mapa">Mapa</a>
+<a href="/cliente/alertas">Mis alertas</a>
+<a href="/cliente/reporte">Reporte</a>
+<a href="/logout">Salir</a>
+</nav>
+<main>{body}</main>
+</body>
+</html>"""
+
+
+def cliente_metricas():
+    conn = get_conn()
+    zonas = conn.execute("SELECT COUNT(*) AS n FROM zonas WHERE activa=1").fetchone()["n"]
+    focos = conn.execute("SELECT COUNT(*) AS n FROM focos").fetchone()["n"]
+    alertas = conn.execute("SELECT COUNT(*) AS n FROM alertas").fetchone()["n"]
+    criticas = conn.execute("SELECT COUNT(*) AS n FROM alertas WHERE nivel='CRITICO'").fetchone()["n"]
+    conn.close()
+    return zonas, focos, alertas, criticas
+
+
+@app.get("/cliente", response_class=HTMLResponse)
+def cliente_inicio():
+    zonas, focos, alertas, criticas = cliente_metricas()
+    body = f"""
+    <section class="hero">
+      <h2>Panel de seguimiento</h2>
+      <p>Consulta el mapa, revisa alertas registradas y descarga información operativa de manera simple. Esta vista es solo de lectura.</p>
+      <p>
+        <a class="button" href="/cliente/mapa">Ver mapa</a>
+        <a class="button light" href="/cliente/alertas">Ver alertas</a>
+        <a class="button light" href="/cliente/reporte">Ver reporte</a>
+      </p>
+    </section>
+    <section class="grid">
+      <div class="card"><div class="metric-label">Zonas monitoreadas</div><div class="metric">{zonas}</div></div>
+      <div class="card"><div class="metric-label">Focos FIRMS</div><div class="metric">{focos}</div></div>
+      <div class="card"><div class="metric-label">Alertas registradas</div><div class="metric">{alertas}</div></div>
+      <div class="card"><div class="metric-label">Críticas</div><div class="metric">{criticas}</div></div>
+    </section>
+    <div class="notice">CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales de emergencia.</div>
+    """
+    return layout_cliente("CampoSeguro | Cliente", body)
+
+
+@app.get("/cliente/mapa", response_class=HTMLResponse)
+def cliente_mapa():
+    try:
+        conn = get_conn()
+        zonas = rows_to_dicts(conn.execute("""
+            SELECT z.*, u.nombre AS usuario_nombre
+            FROM zonas z LEFT JOIN usuarios u ON u.id=z.usuario_id
+            WHERE z.activa=1
+        """).fetchall())
+        focos = rows_to_dicts(conn.execute("""
+            SELECT * FROM focos
+            ORDER BY acq_date DESC, acq_time DESC
+            LIMIT 10000
+        """).fetchall())
+        total_alertas = conn.execute("SELECT COUNT(*) AS n FROM alertas").fetchone()["n"]
+        conn.close()
+
+        body = f"""
+        <style>
+        main {{ padding:0; }}
+        #map {{ height:calc(100vh - 126px); width:100%; }}
+        .panel {{
+          position:absolute; z-index:1000; background:white; padding:14px 16px;
+          top:148px; left:16px; border-radius:16px; box-shadow:0 8px 28px rgba(0,0,0,.2);
+          max-width:320px; font-size:15px;
+        }}
+        .legend-dot {{ display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; }}
+        .legend-line {{ display:inline-block; width:18px; height:12px; border:3px solid #2563eb; border-radius:50%; margin-right:6px; vertical-align:middle; }}
+        .active-mode {{ background:#dcfce7; color:#14532d; padding:7px 9px; border-radius:9px; display:inline-block; margin-top:8px; font-weight:900; }}
+        .map-toolbar {{
+          position:absolute; z-index:1000; background:white; padding:14px; top:148px; right:16px;
+          border-radius:16px; box-shadow:0 8px 28px rgba(0,0,0,.18); max-width:300px;
+        }}
+        .map-toolbar button {{
+          padding:10px 14px; font-size:14px; margin:4px; border-radius:12px; border:0;
+          font-weight:900; cursor:pointer; background:#e9f5ee; color:#14532d;
+        }}
+        .map-status {{ font-size:13px; color:#334155; margin-top:10px; line-height:1.35; }}
+        </style>
+
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+        <div class="panel">
+          <strong>CampoSeguro</strong><br>
+          Área operativa: Bolivia<br>
+          Zonas: {len(zonas)}<br>
+          Focos FIRMS: {len(focos)}<br>
+          Alertas registradas: {total_alertas}<hr>
+          <span class="legend-line"></span>Zona monitoreada<br>
+          <span class="legend-dot" style="background:#f97316"></span>Foco MODIS<br>
+          <span class="legend-dot" style="background:#dc2626"></span>Foco VIIRS<br>
+          <div id="mode-label" class="active-mode">Todo</div>
+        </div>
+
+        <div class="map-toolbar">
+          <strong>Vista del mapa</strong><br>
+          <button onclick="verZonas()">Zonas</button>
+          <button onclick="verFocos()">Focos</button>
+          <button onclick="verTodo()">Todo</button>
+          <div class="map-status">Mapa simple para consulta. Las alertas están en la pestaña Mis alertas.</div>
+        </div>
+
+        <div id="map"></div>
+
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <script>
+        const zonas = {json.dumps(zonas)};
+        const focos = {json.dumps(focos)};
+
+        const canvasRenderer = L.canvas({{ padding: 0.5 }});
+        const map = L.map('map').setView([-16.6, -64.5], 6);
+
+        L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+          maxZoom:19,
+          attribution:'&copy; OpenStreetMap'
+        }}).addTo(map);
+
+        map.createPane('focosPane');
+        map.getPane('focosPane').style.zIndex = 420;
+        map.createPane('zonasPane');
+        map.getPane('zonasPane').style.zIndex = 520;
+
+        const layerZonas = L.layerGroup().addTo(map);
+        const layerFocos = L.layerGroup().addTo(map);
+
+        function focoColor(fuente) {{
+          return (fuente || '').includes('VIIRS') ? '#dc2626' : '#f97316';
+        }}
+
+        function setMode(text) {{
+          const el = document.getElementById('mode-label');
+          if (el) el.innerText = text;
+        }}
+
+        zonas.forEach(z => {{
+          L.circle([z.latitud, z.longitud], {{
+            pane:'zonasPane',
+            radius:z.radio_km*1000,
+            color:'#2563eb',
+            weight:4,
+            fillColor:'#2563eb',
+            fillOpacity:0.05
+          }})
+          .addTo(layerZonas)
+          .bindPopup(`<b>Zona monitoreada</b><br>${{z.nombre_zona}}<br><b>Municipio:</b> ${{z.municipio || ''}}<br><b>Radio:</b> ${{z.radio_km}} km`);
+
+          L.circleMarker([z.latitud, z.longitud], {{
+            pane:'zonasPane',
+            radius:7,
+            color:'#1d4ed8',
+            fillColor:'#1d4ed8',
+            fillOpacity:0.9,
+            weight:2
+          }})
+          .addTo(layerZonas)
+          .bindPopup(`<b>Centro de zona</b><br>${{z.nombre_zona}}`);
+        }});
+
+        focos.forEach(f => {{
+          const color = focoColor(f.fuente);
+          L.circleMarker([f.latitude, f.longitude], {{
+            renderer: canvasRenderer,
+            pane:'focosPane',
+            radius:4,
+            color:color,
+            fillColor:color,
+            fillOpacity:0.70,
+            opacity:0.85,
+            weight:1
+          }})
+          .addTo(layerFocos)
+          .bindPopup(`<b>Foco de calor</b><br>${{f.fuente}}<br>${{f.acq_date}} ${{f.acq_time}}<br>Satélite: ${{f.satellite || ''}}<br>FRP: ${{f.frp || ''}}`);
+        }});
+
+        function addIfMissing(layer) {{ if (!map.hasLayer(layer)) map.addLayer(layer); }}
+        function removeIfPresent(layer) {{ if (map.hasLayer(layer)) map.removeLayer(layer); }}
+
+        function verZonas() {{
+          addIfMissing(layerZonas);
+          removeIfPresent(layerFocos);
+          setMode('Zonas');
+        }}
+
+        function verFocos() {{
+          removeIfPresent(layerZonas);
+          addIfMissing(layerFocos);
+          setMode('Focos');
+        }}
+
+        function verTodo() {{
+          addIfMissing(layerZonas);
+          addIfMissing(layerFocos);
+          setMode('Todo');
+        }}
+
+        verTodo();
+        </script>
+        """
+        return layout_cliente("CampoSeguro | Mapa cliente", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.get("/cliente/alertas", response_class=HTMLResponse)
+def cliente_alertas():
+    conn = get_conn()
+    alertas = rows_to_dicts(conn.execute("""
+        SELECT a.*, z.nombre_zona, z.municipio, f.fuente, f.acq_date, f.acq_time
+        FROM alertas a
+        JOIN zonas z ON z.id=a.zona_id
+        JOIN focos f ON f.id=a.foco_id
+        ORDER BY CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END,
+                 a.distancia_km ASC
+        LIMIT 100
+    """).fetchall())
+    conn.close()
+
+    cards = ""
+    if not alertas:
+        cards = '<div class="card">No hay alertas registradas en este momento.</div>'
+    else:
+        for i, a in enumerate(alertas):
+            msg = esc(mensaje_alerta(a))
+            cards += f"""
+            <div class="alert-card {esc(a['nivel'])}">
+              <div class="alert-title">
+                <h3>{esc(a['nombre_zona'])}</h3>
+                <span class="badge {esc(a['nivel'])}">{esc(a['nivel'])}</span>
+              </div>
+              <div class="alert-meta">
+                <div><strong>Municipio</strong><br>{esc(a['municipio'])}</div>
+                <div><strong>Distancia</strong><br>{esc(a['distancia_km'])} km</div>
+                <div><strong>Fuente</strong><br>{esc(a['fuente'])}</div>
+                <div><strong>Fecha</strong><br>{esc(a['acq_date'])} {esc(a['acq_time'])}</div>
+              </div>
+              <div class="message-box">{msg}</div>
+            </div>
+            """
+
+    body = f"""
+    <div class="card">
+      <h2>Mis alertas</h2>
+      <p>Alertas informativas generadas por cercanía de focos de calor a zonas monitoreadas.</p>
+    </div>
+    <div class="alert-grid">{cards}</div>
+    """
+    return layout_cliente("CampoSeguro | Mis alertas", body)
+
+
+@app.get("/cliente/reporte", response_class=HTMLResponse)
+def cliente_reporte():
+    conn = get_conn()
+    k = {
+        "zonas": conn.execute("SELECT COUNT(*) AS n FROM zonas WHERE activa=1").fetchone()["n"],
+        "focos": conn.execute("SELECT COUNT(*) AS n FROM focos").fetchone()["n"],
+        "alertas": conn.execute("SELECT COUNT(*) AS n FROM alertas").fetchone()["n"],
+        "criticas": conn.execute("SELECT COUNT(*) AS n FROM alertas WHERE nivel='CRITICO'").fetchone()["n"],
+    }
+    resumen = rows_to_dicts(conn.execute("""
+        SELECT z.nombre_zona, z.municipio,
+               COUNT(a.id) AS alertas,
+               MIN(a.distancia_km) AS distancia_minima,
+               MAX(CASE WHEN a.nivel='CRITICO' THEN 3 WHEN a.nivel='ATENCION' THEN 2 ELSE 1 END) AS prioridad
+        FROM zonas z
+        LEFT JOIN alertas a ON a.zona_id=z.id
+        WHERE z.activa=1
+        GROUP BY z.id
+        ORDER BY alertas DESC, z.nombre_zona ASC
+    """).fetchall())
+    conn.close()
+
+    rows = ""
+    for r in resumen:
+        prioridad = r["prioridad"] or 0
+        nivel = "CRITICO" if prioridad == 3 else ("ATENCION" if prioridad == 2 else ("INFORMATIVO" if prioridad == 1 else "SIN ALERTA"))
+        distancia = "" if r["distancia_minima"] is None else f"{float(r['distancia_minima']):.2f} km"
+        badge = f'<span class="badge {nivel}">{nivel}</span>' if nivel != "SIN ALERTA" else "SIN ALERTA"
+        rows += f"""
+        <tr>
+          <td>{esc(r['nombre_zona'])}</td>
+          <td>{esc(r['municipio'])}</td>
+          <td>{esc(r['alertas'])}</td>
+          <td>{badge}</td>
+          <td>{esc(distancia)}</td>
+        </tr>
+        """
+
+    body = f"""
+    <div class="card">
+      <h2>Reporte CampoSeguro</h2>
+      <p>Resumen informativo para seguimiento preventivo.</p>
+    </div>
+    <section class="grid">
+      <div class="card"><div class="metric-label">Zonas</div><div class="metric">{k['zonas']}</div></div>
+      <div class="card"><div class="metric-label">Focos</div><div class="metric">{k['focos']}</div></div>
+      <div class="card"><div class="metric-label">Alertas</div><div class="metric">{k['alertas']}</div></div>
+      <div class="card"><div class="metric-label">Críticas</div><div class="metric">{k['criticas']}</div></div>
+    </section>
+    <div class="card">
+      <h3>Resumen por zona</h3>
+      <table>
+        <tr><th>Zona</th><th>Municipio</th><th>Alertas</th><th>Nivel máximo</th><th>Distancia mínima</th></tr>
+        {rows}
+      </table>
+    </div>
+    <div class="notice">CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales.</div>
+    """
+    return layout_cliente("CampoSeguro | Reporte cliente", body)
+
+
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1430,6 +1846,8 @@ def configuracion():
       <p><strong>Correo:</strong> EMAIL_ENABLED controla si se envían correos reales o se generan archivos outbox.</p>
       <p><strong>Acceso protegido:</strong> {esc("Activado" if AUTH_ENABLED else "Desactivado")}</p>
       <p><strong>Usuario administrador:</strong> {esc(ADMIN_USER)}</p>
+      <p><strong>Usuario cliente:</strong> {esc(CLIENT_USER)}</p>
+      <p><strong>Acceso cliente:</strong> {esc("Configurado" if CLIENT_PASSWORD else "Falta configurar CLIENT_PASSWORD")}</p>
       <p><strong>Contraseña admin:</strong> {esc("Configurada" if ADMIN_PASSWORD else "Falta configurar")}</p>
       <p><a class="button light" href="/prueba-firms">Abrir prueba técnica FIRMS</a></p>
       <p>Para cambiar FIRMS, edita el archivo <strong>.env</strong> y vuelve a abrir CampoSeguro.</p>
