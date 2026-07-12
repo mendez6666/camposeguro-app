@@ -56,3 +56,12 @@ Cambio principal:
 - Las alertas quedan encima con mayor tamaño y prioridad visual.
 - Se agregan modos: Vista regional, Vista operativa, Solo alertas, Focos cercanos y Limpiar focos.
 - Esto permite ver el panorama Santa Cruz/Bolivia y también analizar focos cercanos a zonas monitoreadas.
+## Versión 2.4 - Bolivia activa
+
+Cambio principal:
+- CampoSeguro consulta Bolivia completa como área operativa principal.
+- La API regional sigue siendo South_America, pero el BBOX operativo es Bolivia:
+  -70.0,-23.5,-57.0,-9.0
+- Esto permite incluir Santa Cruz, Beni, Pando y otros departamentos.
+- Las alertas tempranas siguen filtradas a las últimas 24 horas mediante ALERT_WINDOW_HOURS=24.
+- La consulta técnica puede seguir usando FIRMS_QUERY_DAYS=5 para evitar vacíos por desfase temporal/API.

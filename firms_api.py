@@ -169,14 +169,30 @@ def fetch_all_sources(bbox=None, days=None, area_name=None):
 
 def fetch_auto_scz_bolivia(days=None):
     """
-    Estrategia CampoSeguro:
-    1) Consulta Santa Cruz.
-    2) Si todas las fuentes devuelven 0 filas, consulta Bolivia.
-    No consulta toda Sudamérica para evitar ruido y exceso de datos.
+    Estrategia CampoSeguro v2.4:
+    Consulta Bolivia completa como área operativa principal.
+    La API regional sigue siendo South_America, pero el BBOX operativo es Bolivia.
+    Esto permite incluir Santa Cruz, Beni, Pando y otros departamentos.
     """
     all_reports = []
     strategy = []
     days = int(days or FIRMS_QUERY_DAYS)
+
+    area_name = "Bolivia"
+    bbox = AREA_PRESETS[area_name]
+    rows, reports = fetch_all_sources(bbox=bbox, days=days, area_name=area_name)
+    total = len(rows)
+    strategy.append({"area": area_name, "bbox": bbox, "rows": total, "days": days})
+    all_reports.extend(reports)
+
+    return rows, all_reports, {
+        "api_region": API_REGION_LABEL,
+        "selected_area": area_name,
+        "selected_bbox": bbox,
+        "days": days,
+        "strategy": strategy,
+        "fallback_used": False,
+    }
 
     for area_name in ["Santa Cruz", "Bolivia"]:
         bbox = AREA_PRESETS[area_name]

@@ -254,7 +254,7 @@ def inicio():
             <strong>Estado del sistema</strong><br>
             Llave FIRMS: {esc(key_status)}<br>
             Región API: Sudamérica / South_America<br>
-            Estrategia: Santa Cruz → Bolivia<br>
+            Área operativa: Bolivia<br>
             Rango: últimos {esc(FIRMS_DAY_RANGE)} día(s)
           </div>
         </section>
@@ -1068,7 +1068,7 @@ def prueba_firms(bbox: str = "", days: int = 1, preset: str = ""):
           </p>
 
           <div class="notice">
-            Actualización automática: CampoSeguro consulta Santa Cruz primero. Si no encuentra focos, consulta Bolivia. No consulta Sudamérica completa para evitar ruido operativo.
+            Actualización automática: CampoSeguro consulta Bolivia completa como área operativa principal. No consulta Sudamérica completa para evitar ruido operativo.
           </div>
         </div>
 
@@ -1116,7 +1116,7 @@ def configuracion():
       <h2>Configuración actual</h2>
       <p><strong>Llave FIRMS:</strong> {esc(key_status)}</p>
       <p><strong>Región API:</strong> Sudamérica / South_America</p>
-      <p><strong>Estrategia automática:</strong> Santa Cruz → Bolivia</p>
+      <p><strong>Área operativa:</strong> Bolivia completa</p>
       <p><strong>BBOX base:</strong> {esc(FIRMS_AREA_BBOX)}</p>
       <p><strong>Rango de días:</strong> {esc(FIRMS_DAY_RANGE)}</p>
       <p><strong>Fuentes:</strong> {esc(FIRMS_SOURCES)}</p>
