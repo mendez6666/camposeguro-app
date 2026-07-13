@@ -7,6 +7,8 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 DB_PATH = ROOT_DIR / "camposeguro.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DB_BACKEND = "postgresql" if DATABASE_URL.startswith(("postgresql://", "postgres://")) else "sqlite"
 OUTPUT_DIR = ROOT_DIR / "output"
 OUTBOX_DIR = OUTPUT_DIR / "outbox_email"
 

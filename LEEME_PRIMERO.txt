@@ -186,3 +186,33 @@ Nota importante para Render Free:
 - Si Render duerme el servicio por inactividad, el monitor se pausa.
 - Para monitoreo 24/7 económico, usar después un cron externo gratuito que visite:
   `https://app.camposeguro.app/cron/monitor?token=TU_TOKEN`
+
+
+## Versión 3.2 - Base de datos persistente PostgreSQL
+
+Cambio principal:
+- CampoSeguro ahora puede usar PostgreSQL externo mediante `DATABASE_URL`.
+- Si `DATABASE_URL` está vacío, sigue funcionando con SQLite local para pruebas.
+- Si `DATABASE_URL` está configurado, guarda datos en PostgreSQL persistente.
+
+Qué se guarda en PostgreSQL:
+- Usuarios
+- Zonas
+- Radios configurados
+- Focos FIRMS guardados
+- Alertas recalculadas
+- Correos preparados/enviados/outbox
+
+Variable nueva en Render:
+```env
+DATABASE_URL=pega_aqui_la_url_de_neon_o_supabase
+```
+
+Recomendación:
+- Para piloto barato usar Neon PostgreSQL Free.
+- Después de agregar `DATABASE_URL`, ejecutar: Manual Deploy → Clear build cache & deploy.
+- Luego entrar a `/base-datos` para verificar que el motor diga `postgresql`.
+
+Nota:
+- La primera vez con PostgreSQL se crearán tablas nuevas y se cargarán zonas demo si la base está vacía.
+- Si ya tenías datos en SQLite local, no se migran automáticamente a PostgreSQL. Para el piloto actual se puede recrear usuarios/zonas desde la app.

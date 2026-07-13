@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 
 from config import (
     FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCES,
+    DB_BACKEND,
     AUTH_ENABLED, ADMIN_USER, ADMIN_PASSWORD, SESSION_SECRET,
     AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS,
     CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME,
@@ -23,14 +24,14 @@ from config import (
     AUTO_MONITOR_ENABLED, AUTO_MONITOR_INTERVAL_MINUTES, AUTO_MONITOR_RUN_ON_STARTUP,
     AUTO_MONITOR_START_DELAY_SECONDS, MONITOR_SECRET
 )
-from db import init_db, seed_demo_data, get_conn, rows_to_dicts
+from db import init_db, seed_demo_data, get_conn, rows_to_dicts, db_status
 from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
 from emailer import preparar_correos_pendientes, procesar_correos_pendientes, estadisticas_correos, listar_correos, smtp_config_ok
 from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.1")
+app = FastAPI(title="CampoSeguro v3.2")
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico", "/cron/monitor"}
@@ -367,6 +368,7 @@ pre {{ white-space:pre-wrap; background:#111827; color:#e5e7eb; padding:14px; bo
 <a href="/mapa">Mapa</a>
 <a href="/resumen">Resumen</a>
 <a href="/monitor">Monitor</a>
+<a href="/base-datos">Base de datos</a>
 <a href="/reporte">Reporte</a>
 <a href="/alertas">Alertas</a>
 <a href="/zonas">Zonas</a>
@@ -931,6 +933,53 @@ def render_monitor_status_card(status):
     """
 
 
+
+@app.get("/base-datos", response_class=HTMLResponse)
+def base_datos_panel():
+    try:
+        status = db_status()
+        conn = get_conn()
+        counts = {
+            "usuarios": conn.execute("SELECT COUNT(*) AS n FROM usuarios").fetchone()["n"],
+            "zonas": conn.execute("SELECT COUNT(*) AS n FROM zonas").fetchone()["n"],
+            "focos": conn.execute("SELECT COUNT(*) AS n FROM focos").fetchone()["n"],
+            "alertas": conn.execute("SELECT COUNT(*) AS n FROM alertas").fetchone()["n"],
+            "correos": conn.execute("SELECT COUNT(*) AS n FROM correos_alerta").fetchone()["n"],
+        }
+        conn.close()
+
+        persistent_text = "Sí, PostgreSQL externo" if status["persistent"] else "No, SQLite local"
+        notice = "" if status["persistent"] else """
+        <div class="notice">
+          Esta plataforma todavía usa SQLite local. Para persistencia real en Render debes agregar DATABASE_URL de Neon o Supabase y redeplegar.
+        </div>
+        """
+        body = f"""
+        <div class="card">
+          <h2>Base de datos</h2>
+          <p><strong>Motor actual:</strong> {esc(status['backend'])}</p>
+          <p><strong>Persistente:</strong> {esc(persistent_text)}</p>
+          <p><strong>DATABASE_URL configurada:</strong> {esc('Sí' if status['database_url_configured'] else 'No')}</p>
+          {notice}
+        </div>
+        <section class="grid">
+          <div class="card"><div class="metric-label">Usuarios</div><div class="metric">{counts['usuarios']}</div></div>
+          <div class="card"><div class="metric-label">Zonas</div><div class="metric">{counts['zonas']}</div></div>
+          <div class="card"><div class="metric-label">Focos</div><div class="metric">{counts['focos']}</div></div>
+          <div class="card"><div class="metric-label">Alertas</div><div class="metric">{counts['alertas']}</div></div>
+          <div class="card"><div class="metric-label">Correos</div><div class="metric">{counts['correos']}</div></div>
+        </section>
+        <div class="card">
+          <h3>Qué significa</h3>
+          <p>Con PostgreSQL externo, usuarios, zonas, radios, focos, alertas y correos permanecen aunque Render reinicie.</p>
+          <p><a class="button light" href="/monitor">Ver monitor</a> <a class="button light" href="/configuracion">Ver configuración</a></p>
+        </div>
+        """
+        return layout("Base de datos", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
 @app.get("/monitor", response_class=HTMLResponse)
 def monitor_panel():
     status = get_auto_monitor_status()
@@ -1018,7 +1067,7 @@ def inicio():
             Región API: Sudamérica / South_America<br>
             Área operativa: Bolivia<br>
             Evaluación de alertas: últimas {esc(ALERT_EVALUATION_HOURS)} horas<br>
-            Monitor automático: {esc("Activo" if AUTO_MONITOR_ENABLED else "Desactivado")} / cada {esc(AUTO_MONITOR_INTERVAL_MINUTES)} min
+            Monitor automático: {esc("Activo" if AUTO_MONITOR_ENABLED else "Desactivado")} / cada {esc(AUTO_MONITOR_INTERVAL_MINUTES)} min<br>Base de datos: {esc(DB_BACKEND)}
           </div>
         </section>
 
@@ -2043,6 +2092,7 @@ def configuracion():
       <p><strong>Control anti-saturación:</strong> correos desde nivel {esc(EMAIL_MIN_LEVEL)}, máximo {esc(EMAIL_MAX_PER_ZONE)} alerta(s) por zona.</p>
       <p><strong>Radio recomendado:</strong> {esc(DEFAULT_ZONE_RADIUS_KM)} km</p>
       <p><strong>Monitoreo automático:</strong> {esc("Activado" if AUTO_MONITOR_ENABLED else "Desactivado")} cada {esc(AUTO_MONITOR_INTERVAL_MINUTES)} minutos</p>
+      <p><strong>Base de datos:</strong> {esc(DB_BACKEND)}</p>
       <p><strong>Acceso protegido:</strong> {esc("Activado" if AUTH_ENABLED else "Desactivado")}</p>
       <p><strong>Usuario administrador:</strong> {esc(ADMIN_USER)}</p>
       <p><strong>Usuario cliente:</strong> {esc(CLIENT_USER)}</p>
