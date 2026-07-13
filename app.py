@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from config import (
     FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCES,
     DB_BACKEND,
+    EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_SSL, SMTP_USE_TLS, SMTP_USER, SMTP_FROM, EMAIL_REPLY_TO,
     AUTH_ENABLED, ADMIN_USER, ADMIN_PASSWORD, SESSION_SECRET,
     AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS,
     CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME,
@@ -26,12 +27,12 @@ from config import (
 )
 from db import init_db, seed_demo_data, get_conn, rows_to_dicts, db_status
 from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
-from emailer import preparar_correos_pendientes, procesar_correos_pendientes, estadisticas_correos, listar_correos, smtp_config_ok
+from emailer import preparar_correos_pendientes, procesar_correos_pendientes, estadisticas_correos, listar_correos, smtp_config_ok, enviar_correo_prueba
 from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.2")
+app = FastAPI(title="CampoSeguro v3.3")
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico", "/cron/monitor"}
@@ -1923,7 +1924,26 @@ def correos():
           <form method="post" action="/correos/preparar" style="display:inline-block;"><button type="submit">Preparar correos</button></form>
           <form method="post" action="/correos/enviar" style="display:inline-block;"><button type="submit">Procesar correos pendientes</button></form>
         </div>
-        <div class="notice">Si EMAIL_ENABLED=false, CampoSeguro no envía correos reales: genera archivos TXT en <strong>output/outbox_email</strong>.</div>
+        <div class="notice">
+          Si EMAIL_ENABLED=false, CampoSeguro no envía correos reales: genera archivos TXT en <strong>output/outbox_email</strong>.
+          Para Resend usar: smtp.resend.com, puerto 465, SSL activo, usuario resend.
+        </div>
+        <div class="card">
+          <h2>Prueba de correo SMTP</h2>
+          <p><strong>EMAIL_ENABLED:</strong> {esc(EMAIL_ENABLED)}</p>
+          <p><strong>SMTP:</strong> {esc(SMTP_HOST or "No configurado")}:{esc(SMTP_PORT)} |
+             SSL: {esc(SMTP_USE_SSL)} | STARTTLS: {esc(SMTP_USE_TLS)}</p>
+          <p><strong>Usuario SMTP:</strong> {esc(SMTP_USER or "No configurado")}</p>
+          <p><strong>Remitente:</strong> {esc(SMTP_FROM or "No configurado")}</p>
+          <p><strong>Reply-To:</strong> {esc(EMAIL_REPLY_TO or "No configurado")}</p>
+          <form method="post" action="/correos/prueba" style="display:flex; gap:8px; flex-wrap:wrap; align-items:end;">
+            <div style="min-width:280px;">
+              <label>Enviar prueba a</label>
+              <input type="email" name="destinatario" placeholder="tu_correo@gmail.com" required>
+            </div>
+            <button type="submit">Enviar prueba</button>
+          </form>
+        </div>
         <div class="card"><h2>Historial de correos</h2><table><thead><tr><th>Estado</th><th>Destinatario</th><th>Zona</th><th>Nivel</th><th>Creado</th><th>Procesado</th><th>Mensaje/Error</th></tr></thead><tbody>{rows}</tbody></table></div>
         """
         return layout("Correos", body)
@@ -1958,6 +1978,52 @@ def correos_enviar():
         return error_page(exc)
 
 
+
+
+
+
+@app.post("/correos/prueba", response_class=HTMLResponse)
+def correos_prueba(destinatario: str = Form(...)):
+    try:
+        if not smtp_config_ok():
+            body = f"""
+            <div class="card">
+              <h2>No se pudo enviar la prueba</h2>
+              <p>SMTP todavía no está activo. Revisa estas variables en Render:</p>
+              <pre>EMAIL_ENABLED=true
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=465
+SMTP_USE_SSL=true
+SMTP_USE_TLS=false
+SMTP_USER=resend
+SMTP_PASSWORD=tu_api_key_de_resend
+SMTP_FROM=CampoSeguro &lt;alertas@camposeguro.app&gt;</pre>
+              <p><a class="button" href="/correos">Volver</a></p>
+            </div>
+            """
+            return layout("Prueba de correo", body)
+
+        enviar_correo_prueba(destinatario.strip())
+        body = f"""
+        <div class="card">
+          <h2>Correo de prueba enviado</h2>
+          <p>Se envió un mensaje de prueba a:</p>
+          <p><strong>{esc(destinatario)}</strong></p>
+          <p>Revisa también spam/promociones si no aparece en la bandeja principal.</p>
+          <p><a class="button" href="/correos">Volver a correos</a></p>
+        </div>
+        """
+        return layout("Prueba de correo", body)
+    except Exception as exc:
+        body = f"""
+        <div class="card">
+          <h2>Error enviando prueba</h2>
+          <p>El servidor SMTP respondió con error:</p>
+          <pre>{esc(str(exc))}</pre>
+          <p><a class="button" href="/correos">Volver</a></p>
+        </div>
+        """
+        return layout("Error correo", body)
 
 
 @app.get("/prueba-firms", response_class=HTMLResponse)
@@ -2089,6 +2155,9 @@ def configuracion():
       <p><strong>Fuentes:</strong> {esc(FIRMS_SOURCES)}</p>
       <p><strong>Ubicación desde teléfono:</strong> disponible al crear o editar zonas.</p>
       <p><strong>Correo:</strong> EMAIL_ENABLED controla si se envían correos reales o se generan archivos outbox.</p>
+      <p><strong>EMAIL_ENABLED:</strong> {esc(EMAIL_ENABLED)}</p>
+      <p><strong>SMTP:</strong> {esc(SMTP_HOST or "No configurado")}:{esc(SMTP_PORT)} | SSL: {esc(SMTP_USE_SSL)} | STARTTLS: {esc(SMTP_USE_TLS)}</p>
+      <p><strong>Remitente:</strong> {esc(SMTP_FROM or "No configurado")}</p>
       <p><strong>Control anti-saturación:</strong> correos desde nivel {esc(EMAIL_MIN_LEVEL)}, máximo {esc(EMAIL_MAX_PER_ZONE)} alerta(s) por zona.</p>
       <p><strong>Radio recomendado:</strong> {esc(DEFAULT_ZONE_RADIUS_KM)} km</p>
       <p><strong>Monitoreo automático:</strong> {esc("Activado" if AUTO_MONITOR_ENABLED else "Desactivado")} cada {esc(AUTO_MONITOR_INTERVAL_MINUTES)} minutos</p>
