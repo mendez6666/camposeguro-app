@@ -86,6 +86,8 @@ CLIENT_MAX_RADIUS_KM = float(os.getenv("CLIENT_MAX_RADIUS_KM", "50"))
 # Valores: CRITICO, ATENCION, INFORMATIVO
 EMAIL_MIN_LEVEL = os.getenv("EMAIL_MIN_LEVEL", "ATENCION").strip().upper()
 EMAIL_MAX_PER_ZONE = int(os.getenv("EMAIL_MAX_PER_ZONE", "1"))
+EMAIL_SEND_TIMEOUT_SECONDS = int(os.getenv("EMAIL_SEND_TIMEOUT_SECONDS", "20"))
+EMAIL_PROCESS_LIMIT = int(os.getenv("EMAIL_PROCESS_LIMIT", "3"))
 
 # Monitoreo automático
 AUTO_MONITOR_ENABLED = env_bool("AUTO_MONITOR_ENABLED", "true")
