@@ -216,3 +216,52 @@ Recomendación:
 Nota:
 - La primera vez con PostgreSQL se crearán tablas nuevas y se cargarán zonas demo si la base está vacía.
 - Si ya tenías datos en SQLite local, no se migran automáticamente a PostgreSQL. Para el piloto actual se puede recrear usuarios/zonas desde la app.
+
+
+## Versión 3.3 - Correos reales con Resend SMTP
+
+Esta versión agrega soporte para envío real de correos de alerta usando SMTP SSL, recomendado para Resend.
+
+Variables para Render cuando Resend ya verificó el dominio:
+
+```env
+EMAIL_ENABLED=true
+EMAIL_PROVIDER=resend
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=465
+SMTP_USE_SSL=true
+SMTP_USE_TLS=false
+SMTP_USER=resend
+SMTP_PASSWORD=TU_API_KEY_DE_RESEND
+SMTP_FROM=CampoSeguro <alertas@camposeguro.app>
+EMAIL_REPLY_TO=tu_correo_de_respuesta@gmail.com
+```
+
+Recomendación:
+- Mantener `EMAIL_ENABLED=false` hasta que Resend verifique `camposeguro.app`.
+- Después activar `EMAIL_ENABLED=true`.
+- Probar desde `/correos` usando el formulario "Prueba de correo SMTP".
+- Mantener `EMAIL_MIN_LEVEL=ATENCION` y `EMAIL_MAX_PER_ZONE=1` para evitar saturación.
+
+Importante:
+- No usar Titan si solo se necesita enviar alertas transaccionales.
+- No compartir `SMTP_PASSWORD` ni API keys en capturas.
+- Si Resend aún no verifica el dominio, el envío puede fallar aunque las variables estén bien.
+
+
+## v3.3.1 hotfix de arranque seguro
+
+Esta versión corrige el despliegue en Render cuando la app queda en `Exited with status 1` sin mostrar error claro.
+
+Cambios:
+- PostgreSQL conecta con `connect_timeout=10`.
+- El arranque ya no tumba todo el servicio por un error transitorio de base o monitor.
+- Nueva ruta admin: `/diagnostico-arranque`.
+- Mantiene soporte Resend SMTP de v3.3.
+
+Recomendación de despliegue:
+1. Subir todos los archivos a GitHub.
+2. En Render mantener temporalmente `EMAIL_ENABLED=false`.
+3. Hacer `Manual Deploy -> Clear build cache & deploy`.
+4. Entrar a `/diagnostico-arranque`.
+5. Si todo está bien, activar `EMAIL_ENABLED=true` y probar `/correos`.

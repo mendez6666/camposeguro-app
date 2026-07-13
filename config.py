@@ -52,10 +52,13 @@ FIRMS_SOURCES = [
 EMAIL_ENABLED = os.getenv("EMAIL_ENABLED", "false").strip().lower() in ["1", "true", "yes", "si", "sí"]
 SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "false").strip().lower() in ["1", "true", "yes", "si", "sí"]
 SMTP_USE_TLS = os.getenv("SMTP_USE_TLS", "true").strip().lower() in ["1", "true", "yes", "si", "sí"]
 SMTP_USER = os.getenv("SMTP_USER", "").strip()
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER).strip()
+EMAIL_REPLY_TO = os.getenv("EMAIL_REPLY_TO", "").strip()
+EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "smtp").strip().lower()
 
 # Seguridad / acceso básico
 def env_bool(name: str, default: str = "false") -> bool:

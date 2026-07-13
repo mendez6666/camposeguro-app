@@ -32,7 +32,7 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.3")
+app = FastAPI(title="CampoSeguro v3.3.1.1 hotfix")
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico", "/cron/monitor"}
@@ -225,6 +225,26 @@ def logout():
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(AUTH_COOKIE_NAME)
     return response
+
+
+
+@app.get("/diagnostico-arranque", response_class=HTMLResponse)
+def diagnostico_arranque(request: Request):
+    require_admin(request)
+    db_error = STARTUP_DB_ERROR or "Sin error de arranque de base de datos."
+    mon_error = STARTUP_MONITOR_ERROR or "Sin error de arranque de monitor."
+    body = f"""
+    <div class="card">
+      <h1>Diagnóstico de arranque</h1>
+      <p>Esta pantalla ayuda a revisar si Render levantó la app con algún error inicial.</p>
+      <h2>Base de datos</h2>
+      <pre>{esc(db_error)}</pre>
+      <h2>Monitor automático</h2>
+      <pre>{esc(mon_error)}</pre>
+      <p><a class="button" href="/base-datos">Ver base de datos</a> <a class="button secondary" href="/correos">Ver correos</a></p>
+    </div>
+    """
+    return layout("Diagnóstico", body)
 
 
 @app.get("/healthz")
@@ -428,11 +448,28 @@ def error_page(exc):
     return HTMLResponse(layout("Error", f"<div class='card'><h2>Error</h2><pre>{esc(traceback.format_exc())}</pre></div>"), status_code=500)
 
 
+STARTUP_DB_ERROR = None
+STARTUP_MONITOR_ERROR = None
+
+
 @app.on_event("startup")
 def startup():
-    init_db()
-    seed_demo_data()
-    start_background_monitor()
+    global STARTUP_DB_ERROR, STARTUP_MONITOR_ERROR
+
+    try:
+        init_db()
+        seed_demo_data()
+        STARTUP_DB_ERROR = None
+    except Exception:
+        STARTUP_DB_ERROR = traceback.format_exc()
+        print("CAMPOSEGURO_STARTUP_DB_ERROR", STARTUP_DB_ERROR, flush=True)
+
+    try:
+        start_background_monitor()
+        STARTUP_MONITOR_ERROR = None
+    except Exception:
+        STARTUP_MONITOR_ERROR = traceback.format_exc()
+        print("CAMPOSEGURO_STARTUP_MONITOR_ERROR", STARTUP_MONITOR_ERROR, flush=True)
 
 
 def stats():

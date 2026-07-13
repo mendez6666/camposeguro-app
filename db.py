@@ -125,7 +125,7 @@ def get_conn():
         # Compatibilidad con urls tipo postgres://
         if url.startswith("postgres://"):
             url = "postgresql://" + url[len("postgres://"):]
-        raw = psycopg2.connect(url, cursor_factory=RealDictCursor)
+        raw = psycopg2.connect(url, cursor_factory=RealDictCursor, connect_timeout=10)
         return DBConnection(raw, "postgresql")
 
     conn = sqlite3.connect(DB_PATH)

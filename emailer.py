@@ -3,7 +3,7 @@ import re
 import smtplib
 from email.message import EmailMessage
 
-from config import OUTBOX_DIR, EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_TLS, SMTP_USER, SMTP_PASSWORD, SMTP_FROM, EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE
+from config import OUTBOX_DIR, EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_SSL, SMTP_USE_TLS, SMTP_USER, SMTP_PASSWORD, SMTP_FROM, EMAIL_REPLY_TO, EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE
 from db import get_conn
 
 
@@ -37,7 +37,7 @@ def recomendacion_por_nivel(nivel):
 
 def construir_mensaje(row):
     maps_url = f"https://www.google.com/maps?q={row['latitude']},{row['longitude']}"
-    return f"""CampoSeguro informa que se detectó un foco de calor cercano a una zona registrada.
+    return f"""CampoSeguro informa que se detectó un foco de calor cercano a una zona monitoreada.
 
 Nivel de alerta: {row['nivel']}
 Zona: {row['nombre_zona']}
@@ -140,12 +140,45 @@ def enviar_email_real(row):
     msg['From'] = SMTP_FROM
     msg['To'] = row['destinatario']
     msg['Subject'] = row['asunto']
+    if EMAIL_REPLY_TO:
+        msg['Reply-To'] = EMAIL_REPLY_TO
     msg.set_content(row['cuerpo'])
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=60) as server:
-        if SMTP_USE_TLS:
-            server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(msg)
+
+    if SMTP_USE_SSL:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=60) as server:
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=60) as server:
+            if SMTP_USE_TLS:
+                server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+
+
+def enviar_correo_prueba(destinatario):
+    row = {
+        "destinatario": destinatario,
+        "asunto": "Prueba CampoSeguro - correo de alertas",
+        "cuerpo": """Hola,
+
+Este es un correo de prueba de CampoSeguro.
+
+Si recibes este mensaje, el envío SMTP está funcionando correctamente.
+
+Configuración recomendada para Resend:
+- SMTP_HOST=smtp.resend.com
+- SMTP_PORT=465
+- SMTP_USE_SSL=true
+- SMTP_USE_TLS=false
+- SMTP_USER=resend
+- SMTP_FROM=CampoSeguro <alertas@camposeguro.app>
+
+CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales de emergencia.
+"""
+    }
+    enviar_email_real(row)
+    return True
 
 
 def procesar_correos_pendientes():
