@@ -3,7 +3,7 @@ import re
 import smtplib
 from email.message import EmailMessage
 
-from config import OUTBOX_DIR, EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_SSL, SMTP_USE_TLS, SMTP_USER, SMTP_PASSWORD, SMTP_FROM, EMAIL_REPLY_TO, EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE, EMAIL_SEND_TIMEOUT_SECONDS, EMAIL_PROCESS_LIMIT
+from config import OUTBOX_DIR, EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_SSL, SMTP_USE_TLS, SMTP_USER, SMTP_PASSWORD, SMTP_FROM, EMAIL_REPLY_TO, EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE
 from db import get_conn
 
 
@@ -14,21 +14,6 @@ def now_utc():
 def clean_filename(text):
     text = re.sub(r"[^A-Za-z0-9_\-\.]+", "_", str(text))
     return text[:160]
-
-def email_operativo(email):
-    """Evita enviar a correos de ejemplo o direcciones claramente inválidas."""
-    email = (email or "").strip().lower()
-    if not email or "@" not in email:
-        return False
-    bloqueados = [
-        "@ejemplo.com",
-        "@example.com",
-        "sin-correo@camposeguro.local",
-        "correo@ejemplo.com",
-        "municipio@ejemplo.com",
-    ]
-    return not any(email.endswith(b) or email == b for b in bloqueados)
-
 
 
 
@@ -123,7 +108,7 @@ def preparar_correos_pendientes():
     creados = 0
     for r in rows:
         destinatario = (r['usuario_email'] or r['contacto_email'] or '').strip()
-        if not email_operativo(destinatario):
+        if not destinatario or destinatario == 'sin-correo@camposeguro.local':
             continue
         asunto = f"CampoSeguro: alerta {r['nivel']} para {r['nombre_zona']}"
         cuerpo = construir_mensaje(r)
@@ -160,11 +145,11 @@ def enviar_email_real(row):
     msg.set_content(row['cuerpo'])
 
     if SMTP_USE_SSL:
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=EMAIL_SEND_TIMEOUT_SECONDS) as server:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=60) as server:
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.send_message(msg)
     else:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=EMAIL_SEND_TIMEOUT_SECONDS) as server:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=60) as server:
             if SMTP_USE_TLS:
                 server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
@@ -196,23 +181,16 @@ CampoSeguro es una herramienta informativa. No reemplaza verificación en campo 
     return True
 
 
-def procesar_correos_pendientes(limit=None):
-    if limit is None:
-        limit = EMAIL_PROCESS_LIMIT
+def procesar_correos_pendientes():
     conn = get_conn()
     rows = conn.execute("""
         SELECT * FROM correos_alerta
-        WHERE estado='pendiente'
+        WHERE estado IN ('pendiente', 'error')
         ORDER BY creado_utc ASC
-        LIMIT ?
-    """, (limit,)).fetchall()
-    enviados = outbox = errores = bloqueados = 0
+    """).fetchall()
+    enviados = outbox = errores = 0
     for r in rows:
         try:
-            if not email_operativo(r['destinatario']):
-                conn.execute("UPDATE correos_alerta SET estado='bloqueado', error=?, enviado_utc=? WHERE id=?", ("Correo de prueba/no operativo bloqueado", now_utc(), r['id']))
-                bloqueados += 1
-                continue
             if smtp_config_ok():
                 enviar_email_real(r)
                 conn.execute("UPDATE correos_alerta SET estado='enviado', error=NULL, enviado_utc=? WHERE id=?", (now_utc(), r['id']))
@@ -226,34 +204,17 @@ def procesar_correos_pendientes(limit=None):
             errores += 1
     conn.commit()
     conn.close()
-    return {'procesados': len(rows), 'enviados': enviados, 'outbox': outbox, 'errores': errores, 'bloqueados': bloqueados, 'smtp_activo': smtp_config_ok()}
-
-
-def limpiar_correos_prueba_y_errores():
-    conn = get_conn()
-    antes = conn.execute('SELECT COUNT(*) FROM correos_alerta').fetchone()[0]
-    conn.execute("""
-        DELETE FROM correos_alerta
-        WHERE estado IN ('error', 'outbox', 'bloqueado')
-           OR LOWER(destinatario) LIKE ?
-           OR LOWER(destinatario) LIKE ?
-           OR LOWER(destinatario) = ?
-    """, ('%ejemplo.com%', '%example.com%', 'sin-correo@camposeguro.local'))
-    conn.commit()
-    despues = conn.execute('SELECT COUNT(*) FROM correos_alerta').fetchone()[0]
-    conn.close()
-    return {'eliminados': antes - despues, 'antes': antes, 'despues': despues}
+    return {'procesados': len(rows), 'enviados': enviados, 'outbox': outbox, 'errores': errores, 'smtp_activo': smtp_config_ok()}
 
 
 def estadisticas_correos():
     conn = get_conn()
     stats = {}
-    for estado in ['pendiente', 'enviado', 'outbox', 'error', 'bloqueado']:
+    for estado in ['pendiente', 'enviado', 'outbox', 'error']:
         stats[estado if estado != 'pendiente' else 'pendientes'] = conn.execute('SELECT COUNT(*) FROM correos_alerta WHERE estado=?', (estado,)).fetchone()[0]
     stats['total'] = conn.execute('SELECT COUNT(*) FROM correos_alerta').fetchone()[0]
     stats['enviados'] = stats.pop('enviado')
     stats['errores'] = stats.pop('error')
-    stats['bloqueados'] = stats.pop('bloqueado')
     conn.close()
     return stats
 

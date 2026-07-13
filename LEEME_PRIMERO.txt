@@ -265,21 +265,3 @@ Recomendación de despliegue:
 3. Hacer `Manual Deploy -> Clear build cache & deploy`.
 4. Entrar a `/diagnostico-arranque`.
 5. Si todo está bien, activar `EMAIL_ENABLED=true` y probar `/correos`.
-
-## Versión 3.4 - Correos seguros y limpieza de pruebas
-
-Corrige el problema de timeouts al procesar correos pendientes y evita enviar a direcciones de prueba como `correo@ejemplo.com`.
-
-Incluye:
-- Botón `Limpiar pruebas/errores` en `/correos`.
-- Bloqueo automático de correos `@ejemplo.com` y `@example.com`.
-- Procesamiento seguro por lotes pequeños: `EMAIL_PROCESS_LIMIT=3`.
-- Timeout configurable: `EMAIL_SEND_TIMEOUT_SECONDS=20`.
-- Mantiene Resend SMTP con `alertas@camposeguro.app`.
-
-Después de desplegar:
-1. Entrar a `/correos`.
-2. Presionar `Limpiar pruebas/errores`.
-3. Verificar usuarios reales en `/usuarios`.
-4. Presionar `Preparar correos`.
-5. Presionar `Procesar pendientes seguros`.
