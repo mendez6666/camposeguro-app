@@ -282,24 +282,18 @@ def procesar_correos_pendientes(limit=None):
 def limpiar_correos_prueba_y_errores():
     conn = get_conn()
     antes = conn.execute('SELECT COUNT(*) FROM correos_alerta').fetchone()[0]
-    conn.execute("""
-        DELETE FROM correos_alerta
-        WHERE estado IN ('error', 'outbox', 'bloqueado', 'pendiente')
-           AND (
-                LOWER(destinatario) LIKE ?
-             OR LOWER(destinatario) LIKE ?
-             OR LOWER(destinatario) = ?
-           )
-    """, ('%ejemplo.com%', '%example.com%', 'sin-correo@camposeguro.local'))
+    # Elimina pruebas, errores antiguos y outbox local para dejar la cola limpia.
     conn.execute("""
         DELETE FROM correos_alerta
         WHERE estado IN ('error', 'outbox', 'bloqueado')
-    """)
+           OR LOWER(destinatario) LIKE ?
+           OR LOWER(destinatario) LIKE ?
+           OR LOWER(destinatario) = ?
+    """, ('%ejemplo.com%', '%example.com%', 'sin-correo@camposeguro.local'))
     conn.commit()
     despues = conn.execute('SELECT COUNT(*) FROM correos_alerta').fetchone()[0]
     conn.close()
     return {'eliminados': antes - despues, 'antes': antes, 'despues': despues}
-
 
 def estadisticas_correos():
     conn = get_conn()

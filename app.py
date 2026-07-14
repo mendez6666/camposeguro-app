@@ -32,7 +32,7 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.5.1")
+app = FastAPI(title="CampoSeguro v3.5.2")
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico", "/cron/monitor"}
@@ -1933,6 +1933,31 @@ def exportar_mensajes():
 
 
 
+
+@app.get("/correos/limpiar-pruebas", response_class=HTMLResponse)
+def correos_limpiar_pruebas_get():
+    try:
+        r = limpiar_correos_prueba_y_errores()
+        body = f"""
+        <div class="card">
+          <h2>Limpieza realizada</h2>
+          <p><strong>Eliminados:</strong> {esc(r.get('eliminados', 0))}</p>
+          <p><strong>Registros antes:</strong> {esc(r.get('antes', 0))}</p>
+          <p><strong>Registros después:</strong> {esc(r.get('despues', 0))}</p>
+          <p class="notice">Se eliminaron errores antiguos, outbox local y correos de prueba como correo@ejemplo.com.</p>
+          <p><a class="button" href="/correos">Volver a correos</a></p>
+        </div>
+        """
+        return layout("Limpieza de correos", body)
+    except Exception as exc:
+        return error_page(exc)
+
+
+@app.post("/correos/limpiar-pruebas", response_class=HTMLResponse)
+def correos_limpiar_pruebas_post():
+    return correos_limpiar_pruebas_get()
+
+
 @app.get("/correos", response_class=HTMLResponse)
 def correos():
     try:
@@ -1962,7 +1987,7 @@ def correos():
           <form method="post" action="/correos/preparar" style="display:inline-block;"><button type="submit">Preparar correos</button></form>
           <form method="post" action="/correos/enviar" style="display:inline-block;"><button type="submit">Procesar pendientes seguros</button></form>
           <form method="post" action="/correos/limpiar-pruebas" style="display:inline-block;"><button type="submit" class="secondary">Limpiar pruebas/errores</button></form>
-          <p class="muted">Procesamiento seguro: máximo {esc(EMAIL_PROCESS_LIMIT)} correo(s) por clic. En v3.5 se usa Resend API HTTPS para evitar cuelgues de SMTP.</p>
+          <p class="muted">Procesamiento seguro: máximo {esc(EMAIL_PROCESS_LIMIT)} correo(s) por clic. En v3.5.2 se usa Resend API HTTPS para evitar cuelgues de SMTP.</p>
         </div>
         <div class="notice">
           Si EMAIL_ENABLED=false, CampoSeguro no envía correos reales: genera archivos TXT en <strong>output/outbox_email</strong>. Si un correo es @ejemplo.com, se bloquea para evitar errores.
