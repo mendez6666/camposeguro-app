@@ -11,6 +11,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_BACKEND = "postgresql" if DATABASE_URL.startswith(("postgresql://", "postgres://")) else "sqlite"
 OUTPUT_DIR = ROOT_DIR / "output"
 OUTBOX_DIR = OUTPUT_DIR / "outbox_email"
+APP_PUBLIC_URL = os.getenv("APP_PUBLIC_URL", "https://app.camposeguro.app").strip().rstrip("/")
 
 RAW_FIRMS_MAP_KEY = os.getenv("FIRMS_MAP_KEY", "").strip()
 
@@ -90,6 +91,9 @@ EMAIL_MIN_LEVEL = os.getenv("EMAIL_MIN_LEVEL", "ATENCION").strip().upper()
 EMAIL_MAX_PER_ZONE = int(os.getenv("EMAIL_MAX_PER_ZONE", "1"))
 EMAIL_SEND_TIMEOUT_SECONDS = int(os.getenv("EMAIL_SEND_TIMEOUT_SECONDS", "20"))
 EMAIL_PROCESS_LIMIT = int(os.getenv("EMAIL_PROCESS_LIMIT", "3"))
+# v3.6: resumen inteligente, anti-saturación y correo profesional
+EMAIL_SUMMARY_MAX_ALERTS = int(os.getenv("EMAIL_SUMMARY_MAX_ALERTS", "20"))
+EMAIL_DAILY_MAX_PER_RECIPIENT = int(os.getenv("EMAIL_DAILY_MAX_PER_RECIPIENT", "4"))
 
 # Monitoreo automático
 AUTO_MONITOR_ENABLED = env_bool("AUTO_MONITOR_ENABLED", "true")
@@ -100,7 +104,7 @@ MONITOR_SECRET = os.getenv("MONITOR_SECRET", "").strip()
 MONITOR_STATUS_PATH = ROOT_DIR / "monitor_status.json"
 
 
-# --- CampoSeguro v3.5.1: variables Resend API estables ---
+# --- CampoSeguro v3.6: variables Resend API estables ---
 try:
     EMAIL_PROVIDER
 except NameError:

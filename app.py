@@ -21,7 +21,7 @@ from config import (
     AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS,
     CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME,
     DEFAULT_ZONE_RADIUS_KM, CLIENT_MIN_RADIUS_KM, CLIENT_MAX_RADIUS_KM,
-    EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE, EMAIL_SEND_TIMEOUT_SECONDS, EMAIL_PROCESS_LIMIT,
+    EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE, EMAIL_SEND_TIMEOUT_SECONDS, EMAIL_PROCESS_LIMIT, EMAIL_DAILY_MAX_PER_RECIPIENT, EMAIL_SUMMARY_MAX_ALERTS,
     AUTO_MONITOR_ENABLED, AUTO_MONITOR_INTERVAL_MINUTES, AUTO_MONITOR_RUN_ON_STARTUP,
     AUTO_MONITOR_START_DELAY_SECONDS, MONITOR_SECRET
 )
@@ -32,7 +32,7 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.5.2")
+app = FastAPI(title="CampoSeguro v3.6")
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico", "/cron/monitor"}
@@ -1987,16 +1987,15 @@ def correos():
           <form method="post" action="/correos/preparar" style="display:inline-block;"><button type="submit">Preparar correos</button></form>
           <form method="post" action="/correos/enviar" style="display:inline-block;"><button type="submit">Procesar pendientes seguros</button></form>
           <form method="post" action="/correos/limpiar-pruebas" style="display:inline-block;"><button type="submit" class="secondary">Limpiar pruebas/errores</button></form>
-          <p class="muted">Procesamiento seguro: máximo {esc(EMAIL_PROCESS_LIMIT)} correo(s) por clic. En v3.5.2 se usa Resend API HTTPS para evitar cuelgues de SMTP.</p>
+          <p class="muted">Procesamiento inteligente: máximo {esc(EMAIL_PROCESS_LIMIT)} resumen(es) por clic. Cada resumen agrupa hasta {esc(EMAIL_SUMMARY_MAX_ALERTS)} alerta(s) y respeta el límite diario de {esc(EMAIL_DAILY_MAX_PER_RECIPIENT)} correo(s) por destinatario.</p>
         </div>
         <div class="notice">
-          Si EMAIL_ENABLED=false, CampoSeguro no envía correos reales: genera archivos TXT en <strong>output/outbox_email</strong>. Si un correo es @ejemplo.com, se bloquea para evitar errores.
-          Para Resend recomendado: EMAIL_PROVIDER=resend_api y RESEND_API_KEY con la API key.
+          Si EMAIL_ENABLED=false, CampoSeguro no envía correos reales: genera archivos TXT en <strong>output/outbox_email</strong>. Si un correo es @ejemplo.com, se bloquea para evitar errores. En v3.6 los correos se agrupan en un solo resumen por destinatario para evitar saturación. Para Resend recomendado: EMAIL_PROVIDER=resend_api y RESEND_API_KEY con la API key.
         </div>
         <div class="card">
           <h2>Prueba de correo Resend</h2>
           <p><strong>EMAIL_ENABLED:</strong> {esc(EMAIL_ENABLED)}</p>
-          <p><strong>Proveedor:</strong> {esc(EMAIL_PROVIDER)} | <strong>API timeout:</strong> {esc(EMAIL_API_TIMEOUT_SECONDS)} segundos</p><p><strong>SMTP respaldo:</strong> {esc(SMTP_HOST or "No configurado")}:{esc(SMTP_PORT)} | SSL: {esc(SMTP_USE_SSL)} | STARTTLS: {esc(SMTP_USE_TLS)}</p>
+          <p><strong>Proveedor:</strong> {esc(EMAIL_PROVIDER)} | <strong>Modo:</strong> resumen inteligente | <strong>API timeout:</strong> {esc(EMAIL_API_TIMEOUT_SECONDS)} segundos</p><p><strong>SMTP respaldo:</strong> {esc(SMTP_HOST or "No configurado")}:{esc(SMTP_PORT)} | SSL: {esc(SMTP_USE_SSL)} | STARTTLS: {esc(SMTP_USE_TLS)}</p>
           <p><strong>Usuario SMTP/respaldo:</strong> {esc(SMTP_USER or "No configurado")}</p>
           <p><strong>Remitente:</strong> {esc(SMTP_FROM or "No configurado")}</p>
           <p><strong>Reply-To:</strong> {esc(EMAIL_REPLY_TO or "No configurado")}</p>
@@ -2019,7 +2018,7 @@ def correos():
 def correos_preparar():
     try:
         creados = preparar_correos_pendientes()
-        return layout("Correos preparados", f"<div class='card'><h2>Correos preparados</h2><p><strong>Nuevos correos:</strong> {esc(creados)}</p><p><a class='button' href='/correos'>Volver</a></p></div>")
+        return layout("Correos preparados", f"<div class='card'><h2>Correos preparados</h2><p><strong>Nuevas alertas en cola:</strong> {esc(creados)}</p><p><a class='button' href='/correos'>Volver</a></p></div>")
     except Exception as exc:
         return error_page(exc)
 
@@ -2029,13 +2028,13 @@ def correos_enviar():
     try:
         r = procesar_correos_pendientes()
         body = f"""
-        <div class="card"><h2>Correos procesados</h2>
-          <p><strong>Procesados:</strong> {esc(r['procesados'])}</p>
-          <p><strong>Enviados reales:</strong> {esc(r['enviados'])}</p>
+        <div class="card"><h2>Resúmenes procesados</h2>
+          <p><strong>Alertas procesadas:</strong> {esc(r['procesados'])}</p>
+          <p><strong>Resúmenes enviados:</strong> {esc(r['enviados'])}</p>
           <p><strong>Outbox local:</strong> {esc(r['outbox'])}</p>
           <p><strong>Errores:</strong> {esc(r['errores'])}</p>
           <p><strong>Bloqueados:</strong> {esc(r.get('bloqueados', 0))}</p>
-          <p><strong>SMTP activo:</strong> {esc(r['smtp_activo'])}</p>
+          <p><strong>Envío activo:</strong> {esc(r['smtp_activo'])}</p><p><strong>Modo resumen:</strong> {esc(r.get('modo_resumen', False))}</p>
           <p><a class="button" href="/correos">Volver</a></p>
         </div>"""
         return layout("Correos procesados", body)
@@ -2054,7 +2053,7 @@ def correos_prueba(destinatario: str = Form(...)):
             body = f"""
             <div class="card">
               <h2>No se pudo enviar la prueba</h2>
-              <p>SMTP todavía no está activo. Revisa estas variables en Render:</p>
+              <p>El envío todavía no está activo. Revisa estas variables en Render:</p>
               <pre>EMAIL_ENABLED=true
 SMTP_HOST=smtp.resend.com
 SMTP_PORT=465
