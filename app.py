@@ -32,7 +32,7 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.6")
+app = FastAPI(title="CampoSeguro v3.6.2.2")
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico", "/cron/monitor"}
@@ -146,6 +146,7 @@ def login_page_html(next_url="/", error=""):
 <head>
 <meta charset="utf-8">
 <title>CampoSeguro | Iniciar sesión</title>
+<!-- CAMPOSEGURO_LOGO_ZOOM_FIX_362 -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root {{ --verde-oscuro:#0f3023; --verde:#1f6f43; --verde-suave:#e9f5ee; --texto:#142026; }}
@@ -164,7 +165,10 @@ button {{ width:100%; margin-top:22px; background:var(--verde); color:white; bor
 </head>
 <body>
   <div class="login-card">
-    <h1 class="brand">CampoSeguro</h1>
+    <div class="login-brand">
+      <img class="login-logo" src="{LOGO_CAMPOSEGURO_URL}" alt="CampoSeguro">
+      <h1 class="brand">CampoSeguro</h1>
+    </div>
     <p class="subtitle">Acceso protegido a la plataforma de alerta temprana informativa de focos de calor.</p>
     {config_warning}
     {err_html}
@@ -281,6 +285,7 @@ def layout(title, body):
 <head>
 <meta charset="utf-8">
 <title>{esc(title)}</title>
+<!-- CAMPOSEGURO_LOGO_ZOOM_FIX_362 -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root {{
@@ -383,7 +388,15 @@ pre {{ white-space:pre-wrap; background:#111827; color:#e5e7eb; padding:14px; bo
 </style>
 </head>
 <body>
-<header><h1>CampoSeguro</h1><p>Alerta temprana informativa de focos de calor para zonas registradas</p></header>
+<header>
+  <div class="brand-header">
+    <img class="brand-logo" src="{LOGO_CAMPOSEGURO_URL}" alt="CampoSeguro">
+    <div class="brand-copy">
+      <h1>CampoSeguro</h1>
+      <p>Alerta temprana informativa de focos de calor para zonas registradas</p>
+    </div>
+  </div>
+</header>
 <nav>
 <a href="/">Inicio</a>
 <a href="/mapa">Mapa</a>
@@ -518,6 +531,7 @@ def layout_cliente(title, body):
 <head>
 <meta charset="utf-8">
 <title>{esc(title)}</title>
+<!-- CAMPOSEGURO_LOGO_ZOOM_FIX_362 -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root {{
@@ -562,7 +576,15 @@ th {{ background:#eef5f0; }}
 </style>
 </head>
 <body>
-<header><h1>CampoSeguro</h1><p>Vista cliente: seguimiento informativo de focos de calor</p></header>
+<header>
+  <div class="brand-header">
+    <img class="brand-logo" src="{LOGO_CAMPOSEGURO_URL}" alt="CampoSeguro">
+    <div class="brand-copy">
+      <h1>CampoSeguro</h1>
+      <p>Vista cliente: seguimiento informativo de focos de calor</p>
+    </div>
+  </div>
+</header>
 <nav>
 <a href="/cliente">Inicio</a>
 <a href="/cliente/mapa">Mapa</a>
@@ -737,7 +759,8 @@ def cliente_mapa():
         const focos = {json.dumps(focos)};
 
         const canvasRenderer = L.canvas({{ padding: 0.5 }});
-        const map = L.map('map').setView([-16.6, -64.5], 6);
+        const map = L.map('map', {{ zoomControl:false }}).setView([-16.6, -64.5], 6);
+        L.control.zoom({{ position:'bottomright' }}).addTo(map);
 
         L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
           maxZoom:19,
@@ -1335,7 +1358,8 @@ def mapa():
         const focos = {json.dumps(focos)};
 
         const canvasRenderer = L.canvas({{ padding: 0.5 }});
-        const map = L.map('map').setView([-16.6, -64.5], 6);
+        const map = L.map('map', {{ zoomControl:false }}).setView([-16.6, -64.5], 6);
+        L.control.zoom({{ position:'bottomright' }}).addTo(map);
 
         L.tileLayer('https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
           maxZoom:19,
