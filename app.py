@@ -1,3 +1,4 @@
+# CAMPOSEGURO_LOGO_RUNTIME_FIX_363
 from datetime import datetime, timezone
 import html
 import json
@@ -32,7 +33,9 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.6.2.2")
+app = FastAPI(title="CampoSeguro v3.6.3.3.2")
+
+LOGO_CAMPOSEGURO_URL = "https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png"
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico", "/cron/monitor"}
@@ -146,7 +149,6 @@ def login_page_html(next_url="/", error=""):
 <head>
 <meta charset="utf-8">
 <title>CampoSeguro | Iniciar sesión</title>
-<!-- CAMPOSEGURO_LOGO_ZOOM_FIX_362 -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root {{ --verde-oscuro:#0f3023; --verde:#1f6f43; --verde-suave:#e9f5ee; --texto:#142026; }}
@@ -161,12 +163,29 @@ button {{ width:100%; margin-top:22px; background:var(--verde); color:white; bor
 .login-error {{ background:#fee2e2; color:#991b1b; padding:12px; border-radius:12px; margin-bottom:14px; font-weight:700; }}
 .login-warning {{ background:#fff7ed; color:#92400e; padding:12px; border-left:5px solid #f97316; border-radius:12px; margin-bottom:14px; }}
 .help {{ margin-top:18px; font-size:13px; color:#64748b; line-height:1.45; }}
+
+.brand-header {{ display:flex; align-items:center; gap:14px; }}
+.brand-logo {{ height:56px; width:auto; display:block; background:rgba(255,255,255,.96); border-radius:14px; padding:6px; box-shadow:0 6px 18px rgba(0,0,0,.14); }}
+.brand-copy h1 {{ margin:0; font-size:30px; letter-spacing:-0.5px; }}
+.brand-copy p {{ margin:6px 0 0; opacity:.92; }}
+.login-brand {{ display:flex; align-items:center; gap:12px; margin-bottom:10px; }}
+.login-logo {{ height:58px; width:auto; display:block; border-radius:12px; }}
+@media (max-width:700px) {{
+  header {{ padding:16px 18px 14px; }}
+  .brand-logo {{ height:44px; }}
+  .brand-copy h1 {{ font-size:24px; }}
+}}
+
+
+.leaflet-bottom.leaflet-right {{ margin-bottom:18px; margin-right:16px; }}
+.leaflet-control-zoom {{ box-shadow:0 6px 18px rgba(0,0,0,.18); border-radius:10px; overflow:hidden; }}
+
 </style>
 </head>
 <body>
   <div class="login-card">
     <div class="login-brand">
-      <img class="login-logo" src="{LOGO_CAMPOSEGURO_URL}" alt="CampoSeguro">
+      <img class="login-logo" src="https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png" alt="CampoSeguro">
       <h1 class="brand">CampoSeguro</h1>
     </div>
     <p class="subtitle">Acceso protegido a la plataforma de alerta temprana informativa de focos de calor.</p>
@@ -285,7 +304,6 @@ def layout(title, body):
 <head>
 <meta charset="utf-8">
 <title>{esc(title)}</title>
-<!-- CAMPOSEGURO_LOGO_ZOOM_FIX_362 -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root {{
@@ -390,7 +408,7 @@ pre {{ white-space:pre-wrap; background:#111827; color:#e5e7eb; padding:14px; bo
 <body>
 <header>
   <div class="brand-header">
-    <img class="brand-logo" src="{LOGO_CAMPOSEGURO_URL}" alt="CampoSeguro">
+    <img class="brand-logo" src="https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png" alt="CampoSeguro">
     <div class="brand-copy">
       <h1>CampoSeguro</h1>
       <p>Alerta temprana informativa de focos de calor para zonas registradas</p>
@@ -531,7 +549,6 @@ def layout_cliente(title, body):
 <head>
 <meta charset="utf-8">
 <title>{esc(title)}</title>
-<!-- CAMPOSEGURO_LOGO_ZOOM_FIX_362 -->
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root {{
@@ -578,7 +595,7 @@ th {{ background:#eef5f0; }}
 <body>
 <header>
   <div class="brand-header">
-    <img class="brand-logo" src="{LOGO_CAMPOSEGURO_URL}" alt="CampoSeguro">
+    <img class="brand-logo" src="https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png" alt="CampoSeguro">
     <div class="brand-copy">
       <h1>CampoSeguro</h1>
       <p>Vista cliente: seguimiento informativo de focos de calor</p>
