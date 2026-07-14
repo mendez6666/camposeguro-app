@@ -16,23 +16,23 @@ from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from config import (
     FIRMS_MAP_KEY, FIRMS_AREA_BBOX, FIRMS_DAY_RANGE, FIRMS_SOURCES,
     DB_BACKEND,
-    EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_SSL, SMTP_USE_TLS, SMTP_USER, SMTP_FROM, EMAIL_REPLY_TO,
+    EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_SSL, SMTP_USE_TLS, SMTP_USER, SMTP_FROM, EMAIL_REPLY_TO, EMAIL_PROVIDER, RESEND_API_KEY, EMAIL_API_TIMEOUT_SECONDS,
     AUTH_ENABLED, ADMIN_USER, ADMIN_PASSWORD, SESSION_SECRET,
     AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS,
     CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME,
     DEFAULT_ZONE_RADIUS_KM, CLIENT_MIN_RADIUS_KM, CLIENT_MAX_RADIUS_KM,
-    EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE,
+    EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE, EMAIL_SEND_TIMEOUT_SECONDS, EMAIL_PROCESS_LIMIT,
     AUTO_MONITOR_ENABLED, AUTO_MONITOR_INTERVAL_MINUTES, AUTO_MONITOR_RUN_ON_STARTUP,
     AUTO_MONITOR_START_DELAY_SECONDS, MONITOR_SECRET
 )
 from db import init_db, seed_demo_data, get_conn, rows_to_dicts, db_status
 from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
-from emailer import preparar_correos_pendientes, procesar_correos_pendientes, estadisticas_correos, listar_correos, smtp_config_ok, enviar_correo_prueba
+from emailer import preparar_correos_pendientes, procesar_correos_pendientes, estadisticas_correos, listar_correos, smtp_config_ok, enviar_correo_prueba, limpiar_correos_prueba_y_errores
 from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.3.1.1 hotfix")
+app = FastAPI(title="CampoSeguro v3.4")
 
 
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico", "/cron/monitor"}
@@ -1957,20 +1957,22 @@ def correos():
             <div class="card"><div class="metric-label">Enviados</div><div class="metric">{esc(stats_mail['enviados'])}</div></div>
             <div class="card"><div class="metric-label">Outbox local</div><div class="metric">{esc(stats_mail['outbox'])}</div></div>
             <div class="card"><div class="metric-label">Errores</div><div class="metric">{esc(stats_mail['errores'])}</div></div>
+            <div class="card"><div class="metric-label">Bloqueados</div><div class="metric">{esc(stats_mail.get('bloqueados', 0))}</div></div>
           </div>
           <form method="post" action="/correos/preparar" style="display:inline-block;"><button type="submit">Preparar correos</button></form>
-          <form method="post" action="/correos/enviar" style="display:inline-block;"><button type="submit">Procesar correos pendientes</button></form>
+          <form method="post" action="/correos/enviar" style="display:inline-block;"><button type="submit">Procesar pendientes seguros</button></form>
+          <form method="post" action="/correos/limpiar-pruebas" style="display:inline-block;"><button type="submit" class="secondary">Limpiar pruebas/errores</button></form>
+          <p class="muted">Procesamiento seguro: máximo {esc(EMAIL_PROCESS_LIMIT)} correo(s) por clic. En v3.5 se usa Resend API HTTPS para evitar cuelgues de SMTP.</p>
         </div>
         <div class="notice">
-          Si EMAIL_ENABLED=false, CampoSeguro no envía correos reales: genera archivos TXT en <strong>output/outbox_email</strong>.
-          Para Resend usar: smtp.resend.com, puerto 465, SSL activo, usuario resend.
+          Si EMAIL_ENABLED=false, CampoSeguro no envía correos reales: genera archivos TXT en <strong>output/outbox_email</strong>. Si un correo es @ejemplo.com, se bloquea para evitar errores.
+          Para Resend recomendado: EMAIL_PROVIDER=resend_api y RESEND_API_KEY con la API key.
         </div>
         <div class="card">
-          <h2>Prueba de correo SMTP</h2>
+          <h2>Prueba de correo Resend</h2>
           <p><strong>EMAIL_ENABLED:</strong> {esc(EMAIL_ENABLED)}</p>
-          <p><strong>SMTP:</strong> {esc(SMTP_HOST or "No configurado")}:{esc(SMTP_PORT)} |
-             SSL: {esc(SMTP_USE_SSL)} | STARTTLS: {esc(SMTP_USE_TLS)}</p>
-          <p><strong>Usuario SMTP:</strong> {esc(SMTP_USER or "No configurado")}</p>
+          <p><strong>Proveedor:</strong> {esc(EMAIL_PROVIDER)} | <strong>API timeout:</strong> {esc(EMAIL_API_TIMEOUT_SECONDS)} segundos</p><p><strong>SMTP respaldo:</strong> {esc(SMTP_HOST or "No configurado")}:{esc(SMTP_PORT)} | SSL: {esc(SMTP_USE_SSL)} | STARTTLS: {esc(SMTP_USE_TLS)}</p>
+          <p><strong>Usuario SMTP/respaldo:</strong> {esc(SMTP_USER or "No configurado")}</p>
           <p><strong>Remitente:</strong> {esc(SMTP_FROM or "No configurado")}</p>
           <p><strong>Reply-To:</strong> {esc(EMAIL_REPLY_TO or "No configurado")}</p>
           <form method="post" action="/correos/prueba" style="display:flex; gap:8px; flex-wrap:wrap; align-items:end;">
@@ -2007,6 +2009,7 @@ def correos_enviar():
           <p><strong>Enviados reales:</strong> {esc(r['enviados'])}</p>
           <p><strong>Outbox local:</strong> {esc(r['outbox'])}</p>
           <p><strong>Errores:</strong> {esc(r['errores'])}</p>
+          <p><strong>Bloqueados:</strong> {esc(r.get('bloqueados', 0))}</p>
           <p><strong>SMTP activo:</strong> {esc(r['smtp_activo'])}</p>
           <p><a class="button" href="/correos">Volver</a></p>
         </div>"""
