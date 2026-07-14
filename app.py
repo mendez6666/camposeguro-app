@@ -1,4 +1,4 @@
-# CAMPOSEGURO_LOGO_RUNTIME_FIX_363
+# CAMPOSEGURO_LOGO_COMPACTO_PRO_364
 from datetime import datetime, timezone
 import html
 import json
@@ -33,7 +33,7 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.6.3.3.2")
+app = FastAPI(title="CampoSeguro v3.6.4.3.2")
 
 LOGO_CAMPOSEGURO_URL = "https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png"
 
@@ -164,17 +164,11 @@ button {{ width:100%; margin-top:22px; background:var(--verde); color:white; bor
 .login-warning {{ background:#fff7ed; color:#92400e; padding:12px; border-left:5px solid #f97316; border-radius:12px; margin-bottom:14px; }}
 .help {{ margin-top:18px; font-size:13px; color:#64748b; line-height:1.45; }}
 
-.brand-header {{ display:flex; align-items:center; gap:14px; }}
-.brand-logo {{ height:56px; width:auto; display:block; background:rgba(255,255,255,.96); border-radius:14px; padding:6px; box-shadow:0 6px 18px rgba(0,0,0,.14); }}
-.brand-copy h1 {{ margin:0; font-size:30px; letter-spacing:-0.5px; }}
-.brand-copy p {{ margin:6px 0 0; opacity:.92; }}
 .login-brand {{ display:flex; align-items:center; gap:12px; margin-bottom:10px; }}
-.login-logo {{ height:58px; width:auto; display:block; border-radius:12px; }}
-@media (max-width:700px) {{
-  header {{ padding:16px 18px 14px; }}
-  .brand-logo {{ height:44px; }}
-  .brand-copy h1 {{ font-size:24px; }}
-}}
+.login-logo {{ width:135px; max-height:74px; object-fit:contain; display:block; border-radius:10px; }}
+
+
+
 
 
 .leaflet-bottom.leaflet-right {{ margin-bottom:18px; margin-right:16px; }}
@@ -312,9 +306,22 @@ def layout(title, body):
 }}
 * {{ box-sizing:border-box; }}
 body {{ margin:0; font-family:Inter,Arial,sans-serif; background:var(--gris); color:var(--texto); }}
-header {{ background:linear-gradient(135deg,#0f3023,#1f6f43); color:white; padding:24px 32px 20px; }}
+header {{ background:linear-gradient(135deg,#0f3023,#1f6f43); color:white; padding:12px 32px 10px; }}
 header h1 {{ margin:0; font-size:30px; letter-spacing:-0.5px; }}
 header p {{ margin:6px 0 0; opacity:.92; }}
+
+.brand-header {{ display:flex; align-items:center; gap:12px; min-height:56px; }}
+.brand-logo {{ width:128px; max-width:24vw; height:auto; max-height:60px; object-fit:contain; display:block; flex:0 0 auto; }}
+.brand-copy h1 {{ margin:0; font-size:22px; line-height:1.05; letter-spacing:-0.3px; }}
+.brand-copy p {{ margin:4px 0 0; opacity:.92; font-size:13px; line-height:1.25; }}
+@media(max-width:700px) {{
+  header {{ padding:10px 16px 8px; }}
+  .brand-header {{ gap:9px; min-height:46px; }}
+  .brand-logo {{ width:100px; max-height:48px; }}
+  .brand-copy h1 {{ font-size:18px; }}
+  .brand-copy p {{ font-size:11px; }}
+}}
+
 nav {{ background:#184a34; padding:12px 32px; display:flex; gap:18px; flex-wrap:wrap; }}
 nav a {{ color:white; text-decoration:none; font-weight:700; }}
 main {{ padding:26px 32px; }}
@@ -557,9 +564,22 @@ def layout_cliente(title, body):
 }}
 * {{ box-sizing:border-box; }}
 body {{ margin:0; font-family:Inter,Arial,sans-serif; background:var(--gris); color:var(--texto); }}
-header {{ background:linear-gradient(135deg,#0f3023,#1f6f43); color:white; padding:24px 28px 18px; }}
+header {{ background:linear-gradient(135deg,#0f3023,#1f6f43); color:white; padding:12px 28px 10px; }}
 header h1 {{ margin:0; font-size:30px; letter-spacing:-.5px; }}
 header p {{ margin:6px 0 0; opacity:.92; }}
+
+.brand-header {{ display:flex; align-items:center; gap:12px; min-height:56px; }}
+.brand-logo {{ width:128px; max-width:24vw; height:auto; max-height:60px; object-fit:contain; display:block; flex:0 0 auto; }}
+.brand-copy h1 {{ margin:0; font-size:22px; line-height:1.05; letter-spacing:-0.3px; }}
+.brand-copy p {{ margin:4px 0 0; opacity:.92; font-size:13px; line-height:1.25; }}
+@media(max-width:700px) {{
+  header {{ padding:10px 16px 8px; }}
+  .brand-header {{ gap:9px; min-height:46px; }}
+  .brand-logo {{ width:100px; max-height:48px; }}
+  .brand-copy h1 {{ font-size:18px; }}
+  .brand-copy p {{ font-size:11px; }}
+}}
+
 nav {{ background:#184a34; padding:12px 28px; display:flex; gap:18px; flex-wrap:wrap; }}
 nav a {{ color:white; text-decoration:none; font-weight:800; }}
 main {{ padding:24px 28px; }}
