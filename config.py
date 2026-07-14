@@ -59,6 +59,8 @@ SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
 SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER).strip()
 EMAIL_REPLY_TO = os.getenv("EMAIL_REPLY_TO", "").strip()
 EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "smtp").strip().lower()
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", SMTP_PASSWORD).strip()
+EMAIL_API_TIMEOUT_SECONDS = int(os.getenv("EMAIL_API_TIMEOUT_SECONDS", "18"))
 
 # Seguridad / acceso básico
 def env_bool(name: str, default: str = "false") -> bool:
@@ -86,6 +88,8 @@ CLIENT_MAX_RADIUS_KM = float(os.getenv("CLIENT_MAX_RADIUS_KM", "50"))
 # Valores: CRITICO, ATENCION, INFORMATIVO
 EMAIL_MIN_LEVEL = os.getenv("EMAIL_MIN_LEVEL", "ATENCION").strip().upper()
 EMAIL_MAX_PER_ZONE = int(os.getenv("EMAIL_MAX_PER_ZONE", "1"))
+EMAIL_SEND_TIMEOUT_SECONDS = int(os.getenv("EMAIL_SEND_TIMEOUT_SECONDS", "20"))
+EMAIL_PROCESS_LIMIT = int(os.getenv("EMAIL_PROCESS_LIMIT", "3"))
 
 # Monitoreo automático
 AUTO_MONITOR_ENABLED = env_bool("AUTO_MONITOR_ENABLED", "true")
@@ -94,4 +98,21 @@ AUTO_MONITOR_RUN_ON_STARTUP = env_bool("AUTO_MONITOR_RUN_ON_STARTUP", "true")
 AUTO_MONITOR_START_DELAY_SECONDS = int(os.getenv("AUTO_MONITOR_START_DELAY_SECONDS", "45"))
 MONITOR_SECRET = os.getenv("MONITOR_SECRET", "").strip()
 MONITOR_STATUS_PATH = ROOT_DIR / "monitor_status.json"
+
+
+# --- CampoSeguro v3.5.1: variables Resend API estables ---
+try:
+    EMAIL_PROVIDER
+except NameError:
+    EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "smtp").strip().lower()
+
+try:
+    RESEND_API_KEY
+except NameError:
+    RESEND_API_KEY = os.getenv("RESEND_API_KEY", os.getenv("SMTP_PASSWORD", "")).strip()
+
+try:
+    EMAIL_API_TIMEOUT_SECONDS
+except NameError:
+    EMAIL_API_TIMEOUT_SECONDS = int(os.getenv("EMAIL_API_TIMEOUT_SECONDS", "18"))
 
