@@ -2055,7 +2055,7 @@ def datos_resumen():
                MAX(CASE WHEN a.nivel='CRITICO' THEN 3 WHEN a.nivel='ATENCION' THEN 2 ELSE 1 END) AS nivel_max_num,
                MAX(f.acq_date || ' ' || f.acq_time) AS ultima_deteccion
         FROM alertas a JOIN zonas z ON z.id=a.zona_id LEFT JOIN usuarios u ON u.id=z.usuario_id JOIN focos f ON f.id=a.foco_id
-        GROUP BY z.id ORDER BY total_alertas DESC, distancia_minima ASC
+        GROUP BY z.id, z.nombre_zona, z.municipio, u.nombre ORDER BY total_alertas DESC, distancia_minima ASC
     """).fetchall()
     focos_fuente = conn.execute("SELECT fuente, COUNT(*) AS total, MAX(acq_date || ' ' || acq_time) AS ultima_deteccion FROM focos GROUP BY fuente ORDER BY total DESC").fetchall()
     conn.close()
@@ -2094,12 +2094,14 @@ def resumen():
 
 def csv_response(filename, headers, rows):
     output = StringIO()
-    writer = csv.writer(output)
+    # Separador punto y coma + BOM UTF-8 para abrir mejor en Excel/WPS con configuración regional español.
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";")
     writer.writerow(headers)
     for row in rows:
         writer.writerow([row.get(h, "") for h in headers])
     output.seek(0)
-    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
 
 @app.get("/exportar/alertas.csv")
