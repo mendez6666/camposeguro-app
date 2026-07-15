@@ -88,6 +88,18 @@ def recalcular_alertas_existentes():
     las alertas se calculan con ALERT_EVALUATION_HOURS.
     """
     conn = get_conn()
+    # HOTFIX v3.7.1: PostgreSQL protege la relación correos_alerta -> alertas.
+    # Al cambiar radios, las alertas anteriores pueden quedar obsoletas; por eso se limpian
+    # primero los correos preparados/de prueba vinculados a alertas antes de recalcular.
+    try:
+        conn.execute("DELETE FROM correos_alerta WHERE estado IN ('pendiente','error','outbox','bloqueado')")
+    except Exception:
+        pass
+    try:
+        conn.execute("DELETE FROM correos_alerta")
+    except Exception:
+        # Si una instalación antigua no tiene esta tabla, continuamos.
+        pass
     conn.execute("DELETE FROM alertas")
     zonas = conn.execute("SELECT * FROM zonas WHERE activa=1").fetchall()
     focos = conn.execute("SELECT * FROM focos").fetchall()

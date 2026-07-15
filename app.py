@@ -1,4 +1,4 @@
-# CAMPOSEGURO_PILOTO_CLIENTE_REAL_370
+# CAMPOSEGURO_HOTFIX_GUARDAR_RADIO_371
 from datetime import datetime, timezone
 import html
 import json
@@ -33,7 +33,7 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.7")
+app = FastAPI(title="CampoSeguro v3.7.1.1")
 
 LOGO_CAMPOSEGURO_URL = "https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png"
 
@@ -788,14 +788,30 @@ def cliente_zonas():
 
 @app.post("/cliente/zonas/radio")
 def cliente_zona_radio(zona_id: int = Form(...), radio_km: float = Form(...)):
-    radio = clamp_radio_cliente(radio_km)
-    sql, params = cliente_zona_update_sql()
-    conn = get_conn()
-    conn.execute(sql, [radio, zona_id] + params)
-    conn.commit()
-    conn.close()
-    recalcular_alertas_existentes()
-    return RedirectResponse("/cliente/zonas", status_code=303)
+    try:
+        radio = clamp_radio_cliente(radio_km)
+        sql, params = cliente_zona_update_sql()
+        conn = get_conn()
+        conn.execute(sql, [radio, zona_id] + params)
+        conn.commit()
+        conn.close()
+        # Recalcula alertas con limpieza segura para PostgreSQL.
+        recalcular_alertas_existentes()
+        return RedirectResponse("/cliente/zonas", status_code=303)
+    except Exception as exc:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        body = f"""
+        <div class="card">
+          <h2>No se pudo guardar el radio</h2>
+          <p>CampoSeguro detectó un problema al recalcular las alertas. No es un error del usuario.</p>
+          <div class="notice"><strong>Detalle técnico:</strong> {esc(exc)}</div>
+          <p><a class="button" href="/cliente/zonas">Volver a Mis zonas</a></p>
+        </div>
+        """
+        return layout_cliente("CampoSeguro | Error al guardar radio", body)
 
 
 @app.get("/cliente/mapa", response_class=HTMLResponse)
@@ -1141,7 +1157,9 @@ def cliente_reporte_csv():
     conn.close()
 
     output = StringIO()
-    writer = csv.writer(output)
+    # Separador punto y coma + BOM UTF-8 para abrir mejor en Excel/WPS en configuración regional español.
+    output.write("\ufeff")
+    writer = csv.writer(output, delimiter=";")
     writer.writerow(["zona", "municipio", "nivel", "distancia_km", "fuente", "fecha", "hora", "latitud", "longitud", "google_maps"])
     for r in rows:
         writer.writerow([
@@ -1150,7 +1168,7 @@ def cliente_reporte_csv():
             f"https://www.google.com/maps?q={r['latitude']},{r['longitude']}",
         ])
 
-    filename = "camposeguro_reporte_cliente.csv"
+    filename = "camposeguro_reporte_cliente_excel.csv"
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv; charset=utf-8",

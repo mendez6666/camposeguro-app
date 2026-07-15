@@ -446,3 +446,19 @@ Flujo recomendado:
 4. Ir a Render > Environment y poner `CLIENT_USER_ID` con ese número.
 5. Hacer Manual Deploy.
 6. Entrar con usuario cliente y revisar `/cliente`, `/cliente/mapa`, `/cliente/zonas`, `/cliente/alertas`.
+
+## CampoSeguro v3.7.1 - Hotfix guardar radio
+
+Corrige:
+- Error 500 al guardar radios desde `/cliente/zonas/radio` en PostgreSQL.
+- Recalculo seguro de alertas cuando existen correos vinculados.
+- Reporte CSV cliente con separador `;` y BOM UTF-8 para abrir mejor en Excel/WPS.
+
+Subir a GitHub:
+- `app.py`
+- `monitor.py`
+
+Recomendado:
+- `README.md`
+
+Luego en Render: Manual Deploy → Clear build cache & deploy.
