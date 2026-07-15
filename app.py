@@ -779,7 +779,7 @@ th {{ background:#eef5f0; }}
 .alert-title h3 {{ margin:0; font-size:21px; }}
 .alert-meta {{ display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; margin:12px 0; font-size:14px; }}
 .alert-meta div {{ background:#f8fafc; padding:9px; border-radius:10px; }}
-.compact-list { margin:10px 0 12px 18px; padding:0; line-height:1.45; }
+.compact-list {{ margin:10px 0 12px 18px; padding:0; line-height:1.45; }}
 .message-box {{ background:#f8fafc; border:1px solid #dbe3ea; border-radius:12px; padding:12px; margin-top:12px; font-size:13px; line-height:1.45; }}
 @media(max-width:900px) {{ main {{ padding:16px; }} header,nav {{ padding-left:16px; padding-right:16px; }} }}
 </style>
