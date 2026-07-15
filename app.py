@@ -1,4 +1,4 @@
-# CAMPOSEGURO_HOTFIX_GUARDAR_RADIO_371
+# CAMPOSEGURO_V38_ALERTAS_AGRUPADAS_PRO
 from datetime import datetime, timezone
 import html
 import json
@@ -33,7 +33,7 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once, start_monitor_async
 
 
-app = FastAPI(title="CampoSeguro v3.7.3")
+app = FastAPI(title="CampoSeguro v3.8")
 
 LOGO_CAMPOSEGURO_URL = "https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png"
 
@@ -292,6 +292,115 @@ def mensaje_alerta(a):
     )
 
 
+
+
+# ------------------------------
+# v3.8 - Alertas agrupadas profesionales
+# ------------------------------
+def nivel_rank_app(nivel):
+    nivel = str(nivel or "").upper()
+    return {"INFORMATIVO": 1, "ATENCION": 2, "CRITICO": 3}.get(nivel, 0)
+
+
+def nivel_etiqueta_app(nivel):
+    nivel = str(nivel or "INFORMATIVO").upper()
+    if nivel == "CRITICO":
+        return "CRITICO"
+    if nivel == "ATENCION":
+        return "ATENCION"
+    return "INFORMATIVO"
+
+
+def alertas_detalle_rows(where_sql="1=1", params=None, limit=5000):
+    params = list(params or [])
+    conn = get_conn()
+    rows = rows_to_dicts(conn.execute(f"""
+        SELECT a.id AS alerta_id, a.nivel, a.distancia_km, a.creada_utc,
+               z.id AS zona_id, z.nombre_zona, z.municipio, z.radio_km, z.contacto_email,
+               u.nombre AS usuario_nombre, u.email AS usuario_email, u.telefono AS usuario_telefono,
+               f.id AS foco_id, f.fuente, f.acq_date, f.acq_time, f.latitude, f.longitude, f.satellite, f.confidence, f.frp
+        FROM alertas a
+        JOIN zonas z ON z.id=a.zona_id
+        LEFT JOIN usuarios u ON u.id=z.usuario_id
+        JOIN focos f ON f.id=a.foco_id
+        WHERE {where_sql}
+        ORDER BY CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END,
+                 a.distancia_km ASC,
+                 z.nombre_zona ASC
+        LIMIT ?
+    """, params + [limit]).fetchall())
+    conn.close()
+    return rows
+
+
+def agrupar_alertas_por_zona(rows):
+    grupos = {}
+    for r in rows:
+        zid = r.get("zona_id")
+        if zid not in grupos:
+            grupos[zid] = {
+                "zona_id": zid,
+                "nombre_zona": r.get("nombre_zona"),
+                "municipio": r.get("municipio"),
+                "radio_km": r.get("radio_km"),
+                "usuario_nombre": r.get("usuario_nombre"),
+                "usuario_email": r.get("usuario_email"),
+                "usuario_telefono": r.get("usuario_telefono"),
+                "nivel": r.get("nivel"),
+                "prioridad": nivel_rank_app(r.get("nivel")),
+                "distancia_minima": float(r.get("distancia_km") or 0),
+                "ultima_deteccion": f"{r.get('acq_date','')} {r.get('acq_time','')}",
+                "focos_asociados": 0,
+                "alertas_detalle": [],
+                "foco_principal": r,
+            }
+        g = grupos[zid]
+        g["focos_asociados"] += 1
+        g["alertas_detalle"].append(r)
+        pr = nivel_rank_app(r.get("nivel"))
+        if pr > g["prioridad"]:
+            g["prioridad"] = pr
+            g["nivel"] = r.get("nivel")
+        dist = float(r.get("distancia_km") or 0)
+        if dist < float(g["distancia_minima"] or 999999):
+            g["distancia_minima"] = dist
+            g["foco_principal"] = r
+        fecha = f"{r.get('acq_date','')} {r.get('acq_time','')}"
+        if fecha > str(g.get("ultima_deteccion") or ""):
+            g["ultima_deteccion"] = fecha
+    return sorted(grupos.values(), key=lambda x: (-int(x.get("prioridad") or 0), float(x.get("distancia_minima") or 999999), str(x.get("nombre_zona") or "")))
+
+
+def contar_zonas_con_alerta(where_sql="1=1", params=None):
+    params = list(params or [])
+    conn = get_conn()
+    row = conn.execute(f"""
+        SELECT COUNT(DISTINCT z.id) AS zonas_alerta,
+               COUNT(DISTINCT a.foco_id) AS focos_asociados,
+               COUNT(*) AS alertas_detalle,
+               COUNT(DISTINCT CASE WHEN a.nivel='CRITICO' THEN z.id END) AS zonas_criticas,
+               COUNT(DISTINCT CASE WHEN a.nivel='ATENCION' THEN z.id END) AS zonas_atencion,
+               COUNT(DISTINCT CASE WHEN a.nivel='INFORMATIVO' THEN z.id END) AS zonas_informativas
+        FROM alertas a
+        JOIN zonas z ON z.id=a.zona_id
+        LEFT JOIN usuarios u ON u.id=z.usuario_id
+        WHERE {where_sql}
+    """, params).fetchone()
+    conn.close()
+    return row
+
+
+def mensaje_alerta_agrupada(g):
+    foco = g.get("foco_principal") or {}
+    return (
+        f"CampoSeguro informa que se detectaron {g.get('focos_asociados', 0)} foco(s) de calor dentro del radio configurado "
+        f"de la zona {g.get('nombre_zona')}, municipio {g.get('municipio')}. "
+        f"Nivel máximo: {g.get('nivel')}. Distancia mínima aproximada: {float(g.get('distancia_minima') or 0):.2f} km. "
+        f"Foco más cercano: NASA FIRMS/{foco.get('fuente','')} del {foco.get('acq_date','')} a horas {foco.get('acq_time','')}. "
+        f"Recomendación: {recomendacion_por_nivel(g.get('nivel'))} "
+        "Esta información es de carácter preventivo y debe ser verificada con fuentes locales y autoridades competentes."
+    )
+
 def layout(title, body):
     return f"""<!doctype html>
 <html lang="es">
@@ -358,6 +467,7 @@ input,select {{ width:100%; padding:11px; margin-top:5px; border:1px solid #cbd5
 .alert-title h3 {{ margin:0; font-size:21px; }}
 .alert-meta {{ display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; margin:12px 0; font-size:14px; }}
 .alert-meta div {{ background:#f8fafc; padding:9px; border-radius:10px; }}
+.compact-list { margin:10px 0 12px 18px; padding:0; line-height:1.45; }
 .message-box {{ background:#f8fafc; border:1px solid #dbe3ea; border-radius:12px; padding:12px; margin-top:12px; font-size:13px; line-height:1.45; }}
 .copy-button {{ background:#0f766e; padding:9px 12px; font-size:13px; margin-top:8px; }}
 .user-grid,.zone-summary {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }}
@@ -516,10 +626,11 @@ def stats():
         "usuarios": conn.execute("SELECT COUNT(*) FROM usuarios WHERE activo=1").fetchone()[0],
         "zonas": conn.execute("SELECT COUNT(*) FROM zonas WHERE activa=1").fetchone()[0],
         "focos": conn.execute("SELECT COUNT(*) FROM focos").fetchone()[0],
-        "alertas": conn.execute("SELECT COUNT(*) FROM alertas").fetchone()[0],
-        "criticas": conn.execute("SELECT COUNT(*) FROM alertas WHERE nivel='CRITICO'").fetchone()[0],
-        "atencion": conn.execute("SELECT COUNT(*) FROM alertas WHERE nivel='ATENCION'").fetchone()[0],
-        "informativas": conn.execute("SELECT COUNT(*) FROM alertas WHERE nivel='INFORMATIVO'").fetchone()[0],
+        "alertas": conn.execute("SELECT COUNT(DISTINCT zona_id) FROM alertas").fetchone()[0],
+        "focos_asociados": conn.execute("SELECT COUNT(DISTINCT foco_id) FROM alertas").fetchone()[0],
+        "criticas": conn.execute("SELECT COUNT(DISTINCT zona_id) FROM alertas WHERE nivel='CRITICO'").fetchone()[0],
+        "atencion": conn.execute("SELECT COUNT(DISTINCT zona_id) FROM alertas WHERE nivel='ATENCION'").fetchone()[0],
+        "informativas": conn.execute("SELECT COUNT(DISTINCT zona_id) FROM alertas WHERE nivel='INFORMATIVO'").fetchone()[0],
     }
     conn.close()
     return data
@@ -650,6 +761,7 @@ th {{ background:#eef5f0; }}
 .alert-title h3 {{ margin:0; font-size:21px; }}
 .alert-meta {{ display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; margin:12px 0; font-size:14px; }}
 .alert-meta div {{ background:#f8fafc; padding:9px; border-radius:10px; }}
+.compact-list { margin:10px 0 12px 18px; padding:0; line-height:1.45; }
 .message-box {{ background:#f8fafc; border:1px solid #dbe3ea; border-radius:12px; padding:12px; margin-top:12px; font-size:13px; line-height:1.45; }}
 @media(max-width:900px) {{ main {{ padding:16px; }} header,nav {{ padding-left:16px; padding-right:16px; }} }}
 </style>
@@ -833,12 +945,26 @@ def cliente_mapa():
         """).fetchall())
 
         total_alertas = conn.execute(f"""
-            SELECT COUNT(*) AS n
+            SELECT COUNT(DISTINCT z.id) AS n
             FROM alertas a
             JOIN zonas z ON z.id=a.zona_id
             LEFT JOIN usuarios u ON u.id=z.usuario_id
             WHERE {where}
         """, params).fetchone()["n"]
+        focos_asociados = conn.execute(f"""
+            SELECT COUNT(DISTINCT a.foco_id) AS n
+            FROM alertas a
+            JOIN zonas z ON z.id=a.zona_id
+            LEFT JOIN usuarios u ON u.id=z.usuario_id
+            WHERE {where}
+        """, params).fetchone()["n"]
+        alert_foco_ids = [int(r["foco_id"]) for r in conn.execute(f"""
+            SELECT DISTINCT a.foco_id AS foco_id
+            FROM alertas a
+            JOIN zonas z ON z.id=a.zona_id
+            LEFT JOIN usuarios u ON u.id=z.usuario_id
+            WHERE {where}
+        """, params).fetchall()]
         conn.close()
 
         body = f"""
@@ -877,10 +1003,11 @@ def cliente_mapa():
           Vista cliente<br>
           Zonas: {len(zonas)}<br>
           Focos FIRMS: {len(focos)}<br>
-          Mis alertas: {total_alertas}<hr>
+          Zonas con alerta: {total_alertas}<br>Focos asociados: {focos_asociados}<hr>
           <span class="legend-line"></span>Zona monitoreada<br>
           <span class="legend-dot" style="background:#f97316"></span>Foco MODIS<br>
           <span class="legend-dot" style="background:#dc2626"></span>Foco VIIRS<br>
+          <span class="legend-dot" style="background:#facc15;border:2px solid #111"></span>Foco asociado a alerta<br>
           <div id="mode-label" class="active-mode">Todo</div>
         </div>
 
@@ -898,6 +1025,7 @@ def cliente_mapa():
         <script>
         const zonas = {json.dumps(zonas)};
         const focos = {json.dumps(focos)};
+        const alertFocoIds = new Set({json.dumps(alert_foco_ids)});
 
         const canvasRenderer = L.canvas({{ padding: 0.5 }});
         const map = L.map('map', {{ zoomControl:false }}).setView([-16.6, -64.5], 6);
@@ -953,19 +1081,20 @@ def cliente_mapa():
         }});
 
         focos.forEach(f => {{
-          const color = focoColor(f.fuente);
+          const isAlert = alertFocoIds.has(Number(f.id));
+          const color = isAlert ? '#facc15' : focoColor(f.fuente);
           L.circleMarker([f.latitude, f.longitude], {{
             renderer: canvasRenderer,
             pane:'focosPane',
-            radius:3.6,
-            color:color,
+            radius:isAlert ? 6.5 : 3.6,
+            color:isAlert ? '#111827' : color,
             fillColor:color,
-            fillOpacity:0.68,
-            opacity:0.82,
-            weight:1
+            fillOpacity:isAlert ? 0.95 : 0.68,
+            opacity:0.9,
+            weight:isAlert ? 2 : 1
           }})
           .addTo(layerFocos)
-          .bindPopup(`<b>Foco de calor</b><br>${{f.fuente}}<br>${{f.acq_date}} ${{f.acq_time}}<br>Satélite: ${{f.satellite || ''}}<br>FRP: ${{f.frp || ''}}`);
+          .bindPopup(`<b>${{isAlert ? 'Foco asociado a alerta' : 'Foco de calor'}}</b><br>${{f.fuente}}<br>${{f.acq_date}} ${{f.acq_time}}<br>Satélite: ${{f.satellite || ''}}<br>FRP: ${{f.frp || ''}}`);
         }});
 
         function addIfMissing(layer) {{ if (!map.hasLayer(layer)) map.addLayer(layer); }}
@@ -1004,48 +1133,46 @@ def cliente_mapa():
 @app.get("/cliente/alertas", response_class=HTMLResponse)
 def cliente_alertas():
     where, params, etiqueta = client_filter_clause("z", "u")
-    conn = get_conn()
-    alertas = rows_to_dicts(conn.execute(f"""
-        SELECT a.*, z.nombre_zona, z.municipio, u.nombre AS usuario_nombre,
-               f.fuente, f.acq_date, f.acq_time, f.latitude, f.longitude
-        FROM alertas a
-        JOIN zonas z ON z.id=a.zona_id
-        LEFT JOIN usuarios u ON u.id=z.usuario_id
-        JOIN focos f ON f.id=a.foco_id
-        WHERE {where}
-        ORDER BY CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END,
-                 a.distancia_km ASC
-        LIMIT 100
-    """, params).fetchall())
-    conn.close()
+    detalle = alertas_detalle_rows(where, params, 2000)
+    grupos = agrupar_alertas_por_zona(detalle)
 
     cards = ""
-    if not alertas:
-        cards = '<div class="card">No hay alertas registradas en este momento.</div>'
+    if not grupos:
+        cards = '<div class="card">No hay alertas registradas en este momento. Los focos del mapa son contexto regional FIRMS; solo generan alerta si entran al radio configurado de tus zonas.</div>'
     else:
-        for i, a in enumerate(alertas):
-            msg = esc(mensaje_alerta(a))
+        for i, g in enumerate(grupos):
+            foco = g["foco_principal"]
+            msg = esc(mensaje_alerta_agrupada(g))
+            detalle_items = ""
+            for j, r in enumerate(g["alertas_detalle"][:8], start=1):
+                detalle_items += f"<li>Foco {j}: {esc(r['fuente'])} · {esc(r['distancia_km'])} km · {esc(r['acq_date'])} {esc(r['acq_time'])}</li>"
+            if g["focos_asociados"] > 8:
+                detalle_items += f"<li>+ {esc(g['focos_asociados'] - 8)} foco(s) adicional(es) dentro del radio.</li>"
             cards += f"""
-            <div class="alert-card {esc(a['nivel'])}">
+            <div class="alert-card {esc(g['nivel'])}">
               <div class="alert-title">
-                <h3>{esc(a['nombre_zona'])}</h3>
-                <span class="badge {esc(a['nivel'])}">{esc(a['nivel'])}</span>
+                <h3>{esc(g['nombre_zona'])}</h3>
+                <span class="badge {esc(g['nivel'])}">{esc(g['nivel'])}</span>
               </div>
               <div class="alert-meta">
-                <div><strong>Municipio</strong><br>{esc(a['municipio'])}</div>
-                <div><strong>Distancia</strong><br>{esc(a['distancia_km'])} km</div>
-                <div><strong>Fuente</strong><br>{esc(a['fuente'])}</div>
-                <div><strong>Fecha</strong><br>{esc(a['acq_date'])} {esc(a['acq_time'])}</div>
+                <div><strong>Municipio</strong><br>{esc(g['municipio'])}</div>
+                <div><strong>Focos dentro del radio</strong><br>{esc(g['focos_asociados'])}</div>
+                <div><strong>Distancia mínima</strong><br>{esc(('%.2f' % float(g['distancia_minima'])))} km</div>
+                <div><strong>Radio configurado</strong><br>{esc(g['radio_km'])} km</div>
+                <div><strong>Última detección</strong><br>{esc(g['ultima_deteccion'])}</div>
+                <div><strong>Fuente principal</strong><br>{esc(foco.get('fuente'))}</div>
               </div>
+              <p><strong>Recomendación:</strong> {esc(recomendacion_por_nivel(g['nivel']))}</p>
+              <ul class="compact-list">{detalle_items}</ul>
               <div class="message-box">{msg}</div>
-              <p><a class="button light" target="_blank" href="https://www.google.com/maps?q={esc(a['latitude'])},{esc(a['longitude'])}">Abrir foco en Google Maps</a></p>
+              <p><a class="button light" target="_blank" href="https://www.google.com/maps?q={esc(foco.get('latitude'))},{esc(foco.get('longitude'))}">Abrir foco más cercano en Google Maps</a></p>
             </div>
             """
 
     body = f"""
     <div class="card">
-      <h2>Mis alertas</h2>
-      <p>Alertas informativas generadas por cercanía de focos de calor a tus zonas monitoreadas.</p>
+      <h2>Mis alertas agrupadas</h2>
+      <p>Una alerta representa una zona con riesgo. Dentro de cada alerta se listan los focos asociados dentro del radio configurado.</p>
       <div class="notice">{client_scope_notice()}</div>
     </div>
     <div class="alert-grid">{cards}</div>
@@ -1057,79 +1184,49 @@ def cliente_alertas():
 def cliente_reporte():
     where, params, etiqueta = client_filter_clause("z", "u")
     conn = get_conn()
-    k = {
-        "zonas": conn.execute(f"""
-            SELECT COUNT(*) AS n FROM zonas z LEFT JOIN usuarios u ON u.id=z.usuario_id
-            WHERE z.activa=1 AND {where}
-        """, params).fetchone()["n"],
-        "focos": conn.execute(f"""
-            SELECT COUNT(DISTINCT a.foco_id) AS n
-            FROM alertas a JOIN zonas z ON z.id=a.zona_id
-            LEFT JOIN usuarios u ON u.id=z.usuario_id
-            WHERE {where}
-        """, params).fetchone()["n"],
-        "alertas": conn.execute(f"""
-            SELECT COUNT(*) AS n
-            FROM alertas a JOIN zonas z ON z.id=a.zona_id
-            LEFT JOIN usuarios u ON u.id=z.usuario_id
-            WHERE {where}
-        """, params).fetchone()["n"],
-        "criticas": conn.execute(f"""
-            SELECT COUNT(*) AS n
-            FROM alertas a JOIN zonas z ON z.id=a.zona_id
-            LEFT JOIN usuarios u ON u.id=z.usuario_id
-            WHERE a.nivel='CRITICO' AND {where}
-        """, params).fetchone()["n"],
-    }
-    resumen = rows_to_dicts(conn.execute(f"""
-        SELECT z.id, z.nombre_zona, z.municipio,
-               COUNT(a.id) AS alertas,
-               MIN(a.distancia_km) AS distancia_minima,
-               MAX(CASE WHEN a.nivel='CRITICO' THEN 3 WHEN a.nivel='ATENCION' THEN 2 ELSE 1 END) AS prioridad
-        FROM zonas z
-        LEFT JOIN usuarios u ON u.id=z.usuario_id
-        LEFT JOIN alertas a ON a.zona_id=z.id
+    zonas_n = conn.execute(f"""
+        SELECT COUNT(*) AS n FROM zonas z LEFT JOIN usuarios u ON u.id=z.usuario_id
         WHERE z.activa=1 AND {where}
-        GROUP BY z.id, z.nombre_zona, z.municipio
-        ORDER BY alertas DESC, z.nombre_zona ASC
-    """, params).fetchall())
+    """, params).fetchone()["n"]
     conn.close()
+    detalle = alertas_detalle_rows(where, params, 5000)
+    grupos = agrupar_alertas_por_zona(detalle)
+    focos_asociados = len({r['foco_id'] for r in detalle})
+    zonas_con_alerta = len(grupos)
+    criticas = sum(1 for g in grupos if g['nivel'] == 'CRITICO')
 
     rows = ""
-    for r in resumen:
-        prioridad = r["prioridad"] or 0
-        nivel = "CRITICO" if prioridad == 3 else ("ATENCION" if prioridad == 2 else ("INFORMATIVO" if prioridad == 1 else "SIN ALERTA"))
-        distancia = "" if r["distancia_minima"] is None else f"{float(r['distancia_minima']):.2f} km"
-        badge = f'<span class="badge {nivel}">{nivel}</span>' if nivel != "SIN ALERTA" else "SIN ALERTA"
+    for g in grupos:
         rows += f"""
         <tr>
-          <td>{esc(r['nombre_zona'])}</td>
-          <td>{esc(r['municipio'])}</td>
-          <td>{esc(r['alertas'])}</td>
-          <td>{badge}</td>
-          <td>{esc(distancia)}</td>
+          <td>{esc(g['nombre_zona'])}</td>
+          <td>{esc(g['municipio'])}</td>
+          <td>{esc(g['focos_asociados'])}</td>
+          <td><span class="badge {esc(g['nivel'])}">{esc(g['nivel'])}</span></td>
+          <td>{esc(('%.2f' % float(g['distancia_minima'])))} km</td>
+          <td>{esc(g['ultima_deteccion'])}</td>
         </tr>
         """
     if not rows:
-        rows = "<tr><td colspan='5'>No hay zonas asignadas para este cliente.</td></tr>"
+        rows = "<tr><td colspan='6'>No hay alertas agrupadas para este cliente.</td></tr>"
 
     body = f"""
     <div class="card">
       <h2>Reporte CampoSeguro</h2>
-      <p>Resumen informativo para seguimiento preventivo.</p>
-      <p><a class="button" href="/cliente/reporte.csv">Descargar CSV</a> <a class="button light" href="/cliente/mapa">Ver mapa</a></p>
+      <p>Resumen informativo para seguimiento preventivo. Las alertas se agrupan por zona para evitar saturación.</p>
+      <p><a class="button" href="/cliente/reporte.csv">Descargar CSV de focos asociados</a> <a class="button light" href="/cliente/mapa">Ver mapa</a></p>
       <div class="notice">{client_scope_notice()}</div>
     </div>
     <section class="grid">
-      <div class="card"><div class="metric-label">Zonas</div><div class="metric">{k['zonas']}</div></div>
-      <div class="card"><div class="metric-label">Focos asociados</div><div class="metric">{k['focos']}</div></div>
-      <div class="card"><div class="metric-label">Alertas</div><div class="metric">{k['alertas']}</div></div>
-      <div class="card"><div class="metric-label">Críticas</div><div class="metric">{k['criticas']}</div></div>
+      <div class="card"><div class="metric-label">Zonas asignadas</div><div class="metric">{zonas_n}</div></div>
+      <div class="card"><div class="metric-label">Zonas con alerta</div><div class="metric">{zonas_con_alerta}</div></div>
+      <div class="card"><div class="metric-label">Focos asociados</div><div class="metric">{focos_asociados}</div></div>
+      <div class="card"><div class="metric-label">Críticas</div><div class="metric">{criticas}</div></div>
     </section>
     <div class="card">
-      <h3>Resumen por zona</h3>
+      <h3>Resumen agrupado por zona</h3>
       <table>
-        <tr><th>Zona</th><th>Municipio</th><th>Alertas</th><th>Nivel máximo</th><th>Distancia mínima</th></tr>
+        <tr><th>Zona</th><th>Municipio</th><th>Focos dentro del radio</th><th>Nivel máximo</th><th>Distancia mínima</th><th>Última detección</th></tr>
         {rows}
       </table>
     </div>
@@ -1349,12 +1446,12 @@ def inicio():
           <div class="card"><div class="metric-label">Usuarios activos</div><div class="metric">{s['usuarios']}</div></div>
           <div class="card"><div class="metric-label">Zonas activas</div><div class="metric">{s['zonas']}</div></div>
           <div class="card"><div class="metric-label">Focos FIRMS</div><div class="metric">{s['focos']}</div></div>
-          <div class="card"><div class="metric-label">Alertas</div><div class="metric">{s['alertas']}</div></div>
+          <div class="card"><div class="metric-label">Zonas con alerta</div><div class="metric">{s['alertas']}</div></div>
           <div class="card"><div class="metric-label">Críticas</div><div class="metric">{s['criticas']}</div></div>
         </section>
 
         <div class="card">
-          <h2>Distribución de alertas</h2>
+          <h2>Distribución de zonas con alerta</h2>
           <p>
             <span class="badge CRITICO">Críticas: {s['criticas']}</span>
             <span class="badge ATENCION">Atención: {s['atencion']}</span>
@@ -1470,7 +1567,9 @@ def mapa():
             LIMIT 10000
         """).fetchall())
 
-        total_alertas = conn.execute("SELECT COUNT(*) AS n FROM alertas").fetchone()["n"]
+        total_alertas = conn.execute("SELECT COUNT(DISTINCT zona_id) AS n FROM alertas").fetchone()["n"]
+        focos_asociados = conn.execute("SELECT COUNT(DISTINCT foco_id) AS n FROM alertas").fetchone()["n"]
+        alert_foco_ids = [int(r["foco_id"]) for r in conn.execute("SELECT DISTINCT foco_id FROM alertas").fetchall()]
         conn.close()
 
         body = f"""
@@ -1551,10 +1650,11 @@ def mapa():
           Área operativa: Bolivia<br>
           Zonas: {len(zonas)}<br>
           Focos FIRMS: {len(focos)}<br>
-          Alertas registradas: {total_alertas}<hr>
+          Zonas con alerta: {total_alertas}<br>Focos asociados: {focos_asociados}<hr>
           <span class="legend-line"></span>Zona monitoreada<br>
           <span class="legend-dot" style="background:#f97316"></span>Foco MODIS<br>
           <span class="legend-dot" style="background:#dc2626"></span>Foco VIIRS<br>
+          <span class="legend-dot" style="background:#facc15;border:2px solid #111"></span>Foco asociado a alerta<br>
           <div id="mode-label" class="active-mode">Todo</div>
         </div>
 
@@ -1574,6 +1674,7 @@ def mapa():
         <script>
         const zonas = {json.dumps(zonas)};
         const focos = {json.dumps(focos)};
+        const alertFocoIds = new Set({json.dumps(alert_foco_ids)});
 
         const canvasRenderer = L.canvas({{ padding: 0.5 }});
         const map = L.map('map', {{ zoomControl:false }}).setView([-16.6, -64.5], 6);
@@ -1626,19 +1727,20 @@ def mapa():
         }});
 
         focos.forEach(f => {{
-          const color = focoColor(f.fuente);
+          const isAlert = alertFocoIds.has(Number(f.id));
+          const color = isAlert ? '#facc15' : focoColor(f.fuente);
           L.circleMarker([f.latitude, f.longitude], {{
             renderer: canvasRenderer,
             pane:'focosPane',
-            radius:4,
-            color:color,
+            radius:isAlert ? 7 : 4,
+            color:isAlert ? '#111827' : color,
             fillColor:color,
-            fillOpacity:0.70,
-            opacity:0.85,
-            weight:1
+            fillOpacity:isAlert ? 0.95 : 0.70,
+            opacity:0.92,
+            weight:isAlert ? 2 : 1
           }})
           .addTo(layerFocos)
-          .bindPopup(`<b>Foco de calor</b><br>${{f.fuente}}<br>${{f.acq_date}} ${{f.acq_time}}<br>Satélite: ${{f.satellite || ''}}<br>FRP: ${{f.frp || ''}}`);
+          .bindPopup(`<b>${{isAlert ? 'Foco asociado a alerta' : 'Foco de calor'}}</b><br>${{f.fuente}}<br>${{f.acq_date}} ${{f.acq_time}}<br>Satélite: ${{f.satellite || ''}}<br>FRP: ${{f.frp || ''}}`);
         }});
 
         function addIfMissing(layer) {{
@@ -1977,54 +2079,50 @@ def recalcular_alertas():
 @app.get("/alertas", response_class=HTMLResponse)
 def alertas():
     try:
-        conn = get_conn()
-        rows_db = conn.execute("""
-            SELECT a.*, z.nombre_zona, z.municipio, u.nombre AS usuario_nombre, u.telefono AS usuario_telefono,
-                   f.latitude, f.longitude, f.acq_date, f.acq_time, f.fuente
-            FROM alertas a
-            JOIN zonas z ON z.id=a.zona_id
-            LEFT JOIN usuarios u ON u.id=z.usuario_id
-            JOIN focos f ON f.id=a.foco_id
-            ORDER BY CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END, a.distancia_km ASC
-            LIMIT 1000
-        """).fetchall()
-        conn.close()
-        if not rows_db:
-            return layout("Alertas", "<div class='card'><h2>Alertas</h2><p>No hay alertas registradas.</p></div>")
+        detalle = alertas_detalle_rows("1=1", [], 5000)
+        grupos = agrupar_alertas_por_zona(detalle)
+        if not grupos:
+            return layout("Alertas", "<div class='card'><h2>Alertas agrupadas</h2><p>No hay alertas registradas.</p><p class='notice'>Los focos FIRMS del mapa son contexto. Solo se genera alerta si entran al radio configurado de una zona activa.</p></div>")
 
         cards = ""
         table_rows = ""
-        for idx, a in enumerate(rows_db, start=1):
-            rec = recomendacion_por_nivel(a["nivel"])
-            msg = mensaje_alerta(a)
+        for idx, g in enumerate(grupos, start=1):
+            foco = g["foco_principal"]
+            rec = recomendacion_por_nivel(g["nivel"])
+            msg = mensaje_alerta_agrupada(g)
+            foco_items = ""
+            for j, r in enumerate(g["alertas_detalle"][:10], start=1):
+                foco_items += f"<li>Foco {j}: {esc(r['fuente'])} · {esc(r['distancia_km'])} km · {esc(r['acq_date'])} {esc(r['acq_time'])}</li>"
+            if g["focos_asociados"] > 10:
+                foco_items += f"<li>+ {esc(g['focos_asociados'] - 10)} foco(s) adicional(es) dentro del radio.</li>"
             cards += f"""
-            <div class="alert-card {esc(a['nivel'])}">
-              <div class="alert-title"><h3>{esc(a['nombre_zona'])}</h3><span class="badge {esc(a['nivel'])}">{esc(a['nivel'])}</span></div>
+            <div class="alert-card {esc(g['nivel'])}">
+              <div class="alert-title"><h3>{esc(g['nombre_zona'])}</h3><span class="badge {esc(g['nivel'])}">{esc(g['nivel'])}</span></div>
               <div class="alert-meta">
-                <div><strong>Usuario</strong><br>{esc(a['usuario_nombre'] or 'Sin usuario')}</div>
-                <div><strong>Municipio</strong><br>{esc(a['municipio'])}</div>
-                <div><strong>Distancia</strong><br>{esc(a['distancia_km'])} km</div>
-                <div><strong>Fuente</strong><br>{esc(a['fuente'])}</div>
-                <div><strong>Fecha</strong><br>{esc(a['acq_date'])} {esc(a['acq_time'])}</div>
-                <div><strong>Teléfono</strong><br>{esc(a['usuario_telefono'] or '')}</div>
+                <div><strong>Usuario</strong><br>{esc(g['usuario_nombre'] or 'Sin usuario')}</div>
+                <div><strong>Municipio</strong><br>{esc(g['municipio'])}</div>
+                <div><strong>Focos asociados</strong><br>{esc(g['focos_asociados'])}</div>
+                <div><strong>Distancia mínima</strong><br>{esc(('%.2f' % float(g['distancia_minima'])))} km</div>
+                <div><strong>Radio</strong><br>{esc(g['radio_km'])} km</div>
+                <div><strong>Teléfono</strong><br>{esc(g['usuario_telefono'] or '')}</div>
               </div>
               <p><strong>Recomendación:</strong> {esc(rec)}</p>
+              <ul class="compact-list">{foco_items}</ul>
               <div class="message-box" id="msg-{idx}">{esc(msg)}</div>
               <button class="copy-button" type="button" onclick="copiarTexto('msg-{idx}')">Copiar mensaje</button>
-              <a class="button light" target="_blank" href="https://www.google.com/maps?q={esc(a['latitude'])},{esc(a['longitude'])}">Abrir foco en mapa</a>
+              <a class="button light" target="_blank" href="https://www.google.com/maps?q={esc(foco.get('latitude'))},{esc(foco.get('longitude'))}">Abrir foco más cercano</a>
             </div>
             """
-            table_rows += f"<tr><td><span class='badge {esc(a['nivel'])}'>{esc(a['nivel'])}</span></td><td>{esc(a['nombre_zona'])}</td><td>{esc(a['usuario_nombre'] or '')}</td><td>{esc(a['distancia_km'])} km</td><td>{esc(a['fuente'])}</td><td>{esc(a['acq_date'])} {esc(a['acq_time'])}</td></tr>"
+            table_rows += f"<tr><td><span class='badge {esc(g['nivel'])}'>{esc(g['nivel'])}</span></td><td>{esc(g['nombre_zona'])}</td><td>{esc(g['usuario_nombre'] or '')}</td><td>{esc(g['focos_asociados'])}</td><td>{esc(('%.2f' % float(g['distancia_minima'])))} km</td><td>{esc(g['ultima_deteccion'])}</td></tr>"
 
         body = f"""
-        <div class="card"><h2>Panel de alertas</h2><p>Alertas ordenadas por prioridad y distancia.</p></div>
+        <div class="card"><h2>Panel de alertas agrupadas</h2><p>Una tarjeta representa una zona con riesgo. Los focos asociados son los puntos FIRMS dentro del radio configurado.</p></div>
         <div class="alert-grid">{cards}</div>
-        <div class="card"><h2>Tabla técnica</h2><table><thead><tr><th>Nivel</th><th>Zona</th><th>Usuario</th><th>Distancia</th><th>Fuente</th><th>Fecha</th></tr></thead><tbody>{table_rows}</tbody></table></div>
+        <div class="card"><h2>Tabla técnica agrupada</h2><table><thead><tr><th>Nivel</th><th>Zona</th><th>Usuario</th><th>Focos asociados</th><th>Distancia mínima</th><th>Última detección</th></tr></thead><tbody>{table_rows}</tbody></table></div>
         """
         return layout("Alertas", body)
     except Exception as exc:
         return error_page(exc)
-
 
 @app.get("/focos", response_class=HTMLResponse)
 def focos():
@@ -2043,52 +2141,45 @@ def focos():
 
 def datos_resumen():
     conn = get_conn()
-    general = conn.execute("""
-        SELECT COUNT(*) AS total_alertas,
-               SUM(CASE WHEN nivel='CRITICO' THEN 1 ELSE 0 END) AS criticas,
-               SUM(CASE WHEN nivel='ATENCION' THEN 1 ELSE 0 END) AS atencion,
-               SUM(CASE WHEN nivel='INFORMATIVO' THEN 1 ELSE 0 END) AS informativas,
-               MIN(distancia_km) AS distancia_minima
-        FROM alertas
-    """).fetchone()
     total_focos = conn.execute("SELECT COUNT(*) FROM focos").fetchone()[0]
     total_zonas = conn.execute("SELECT COUNT(*) FROM zonas WHERE activa=1").fetchone()[0]
-    por_zona = conn.execute("""
-        SELECT z.nombre_zona, z.municipio, u.nombre AS usuario_nombre,
-               COUNT(*) AS total_alertas, MIN(a.distancia_km) AS distancia_minima,
-               MAX(CASE WHEN a.nivel='CRITICO' THEN 3 WHEN a.nivel='ATENCION' THEN 2 ELSE 1 END) AS nivel_max_num,
-               MAX(f.acq_date || ' ' || f.acq_time) AS ultima_deteccion
-        FROM alertas a JOIN zonas z ON z.id=a.zona_id LEFT JOIN usuarios u ON u.id=z.usuario_id JOIN focos f ON f.id=a.foco_id
-        GROUP BY z.id, z.nombre_zona, z.municipio, u.nombre ORDER BY total_alertas DESC, distancia_minima ASC
-    """).fetchall()
     focos_fuente = conn.execute("SELECT fuente, COUNT(*) AS total, MAX(acq_date || ' ' || acq_time) AS ultima_deteccion FROM focos GROUP BY fuente ORDER BY total DESC").fetchall()
     conn.close()
-    return general, total_focos, total_zonas, por_zona, focos_fuente
+    detalle = alertas_detalle_rows("1=1", [], 5000)
+    grupos = agrupar_alertas_por_zona(detalle)
+    general = {
+        "zonas_con_alerta": len(grupos),
+        "focos_asociados": len({r['foco_id'] for r in detalle}),
+        "criticas": sum(1 for g in grupos if g['nivel'] == 'CRITICO'),
+        "atencion": sum(1 for g in grupos if g['nivel'] == 'ATENCION'),
+        "informativas": sum(1 for g in grupos if g['nivel'] == 'INFORMATIVO'),
+        "distancia_minima": min([float(g['distancia_minima']) for g in grupos], default=None),
+    }
+    return general, total_focos, total_zonas, grupos, focos_fuente
 
 
 @app.get("/resumen", response_class=HTMLResponse)
 def resumen():
     try:
         general, total_focos, total_zonas, por_zona, focos_fuente = datos_resumen()
-        nivel_map = {3: "CRITICO", 2: "ATENCION", 1: "INFORMATIVO"}
         cards = ""
         for z in por_zona:
-            nivel = nivel_map.get(z["nivel_max_num"], "INFORMATIVO")
-            cards += f"<div class='zone-card'><h3>{esc(z['nombre_zona'])}</h3><p><strong>Usuario:</strong> {esc(z['usuario_nombre'] or '')}</p><p><strong>Municipio:</strong> {esc(z['municipio'])}</p><p><strong>Alertas:</strong> {esc(z['total_alertas'])}</p><p><strong>Nivel máximo:</strong> <span class='badge {esc(nivel)}'>{esc(nivel)}</span></p><p><strong>Distancia mínima:</strong> {esc(round(z['distancia_minima'],2))} km</p><p><strong>Última detección:</strong> {esc(z['ultima_deteccion'])}</p></div>"
+            cards += f"<div class='zone-card'><h3>{esc(z['nombre_zona'])}</h3><p><strong>Usuario:</strong> {esc(z['usuario_nombre'] or '')}</p><p><strong>Municipio:</strong> {esc(z['municipio'])}</p><p><strong>Focos asociados:</strong> {esc(z['focos_asociados'])}</p><p><strong>Nivel máximo:</strong> <span class='badge {esc(z['nivel'])}'>{esc(z['nivel'])}</span></p><p><strong>Distancia mínima:</strong> {esc(('%.2f' % float(z['distancia_minima'])))} km</p><p><strong>Última detección:</strong> {esc(z['ultima_deteccion'])}</p></div>"
         if not cards:
             cards = "<p>No hay alertas para resumir.</p>"
         fuente_rows = "".join([f"<tr><td>{esc(f['fuente'])}</td><td>{esc(f['total'])}</td><td>{esc(f['ultima_deteccion'])}</td></tr>" for f in focos_fuente])
         body = f"""
         <div class="card"><h2>Resumen ejecutivo</h2>
+          <p class="notice"><strong>Lectura correcta:</strong> una alerta representa una zona con riesgo. Los focos asociados son los puntos FIRMS dentro del radio configurado.</p>
           <div class="grid">
             <div class="card"><div class="metric-label">Zonas activas</div><div class="metric">{esc(total_zonas)}</div></div>
             <div class="card"><div class="metric-label">Focos FIRMS</div><div class="metric">{esc(total_focos)}</div></div>
-            <div class="card"><div class="metric-label">Alertas</div><div class="metric">{esc(general['total_alertas'] or 0)}</div></div>
-            <div class="card"><div class="metric-label">Críticas</div><div class="metric">{esc(general['criticas'] or 0)}</div></div>
+            <div class="card"><div class="metric-label">Zonas con alerta</div><div class="metric">{esc(general['zonas_con_alerta'])}</div></div>
+            <div class="card"><div class="metric-label">Focos asociados</div><div class="metric">{esc(general['focos_asociados'])}</div></div>
           </div>
-          <p><a class="button" href="/exportar/alertas.csv">Exportar alertas CSV</a> <a class="button light" href="/exportar/focos.csv">Exportar focos CSV</a></p>
+          <p><a class="button" href="/exportar/alertas.csv">Exportar focos asociados CSV</a> <a class="button light" href="/exportar/focos.csv">Exportar focos FIRMS CSV</a></p>
         </div>
-        <div class="card"><h2>Resumen por zona</h2><div class="zone-summary">{cards}</div></div>
+        <div class="card"><h2>Resumen agrupado por zona</h2><div class="zone-summary">{cards}</div></div>
         <div class="card"><h2>Focos por fuente</h2><table><thead><tr><th>Fuente</th><th>Total</th><th>Última detección</th></tr></thead><tbody>{fuente_rows}</tbody></table></div>
         """
         return layout("Resumen", body)
@@ -2136,28 +2227,25 @@ def reporte():
     try:
         general, total_focos, total_zonas, por_zona, focos_fuente = datos_resumen()
         fecha_reporte = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        nivel_map = {3: "CRITICO", 2: "ATENCION", 1: "INFORMATIVO"}
         zona_rows = ""
         for z in por_zona:
-            nivel = nivel_map.get(z["nivel_max_num"], "INFORMATIVO")
-            zona_rows += f"<tr><td>{esc(z['nombre_zona'])}</td><td>{esc(z['usuario_nombre'] or '')}</td><td>{esc(z['municipio'])}</td><td>{esc(z['total_alertas'])}</td><td><span class='badge {esc(nivel)}'>{esc(nivel)}</span></td><td>{esc(round(z['distancia_minima'],2))} km</td><td>{esc(z['ultima_deteccion'])}</td></tr>"
+            zona_rows += f"<tr><td>{esc(z['nombre_zona'])}</td><td>{esc(z['usuario_nombre'] or '')}</td><td>{esc(z['municipio'])}</td><td>{esc(z['focos_asociados'])}</td><td><span class='badge {esc(z['nivel'])}'>{esc(z['nivel'])}</span></td><td>{esc(('%.2f' % float(z['distancia_minima'])))} km</td><td>{esc(z['ultima_deteccion'])}</td></tr>"
         if not zona_rows:
-            zona_rows = "<tr><td colspan='7'>Sin alertas.</td></tr>"
+            zona_rows = "<tr><td colspan='7'>Sin alertas agrupadas.</td></tr>"
 
         body = f"""
         <div class="card">
           <div class="report-header"><div><h2>Reporte operativo CampoSeguro</h2><p>Monitoreo informativo de focos de calor cercanos a zonas registradas.</p></div><div class="report-meta"><strong>Fecha UTC</strong><br>{esc(fecha_reporte)}<br><br><strong>Fuente</strong><br>NASA FIRMS Area API</div></div>
-          <div class="print-actions"><button onclick="window.print()">Imprimir / Guardar PDF</button><a class="button light" href="/exportar/alertas.csv">Exportar alertas CSV</a><a class="button light" href="/exportar/mensajes.txt">Descargar mensajes</a></div>
-          <div class="report-kpis"><div class="report-kpi"><span>Zonas activas</span><strong>{esc(total_zonas)}</strong></div><div class="report-kpi"><span>Focos FIRMS</span><strong>{esc(total_focos)}</strong></div><div class="report-kpi"><span>Alertas</span><strong>{esc(general['total_alertas'] or 0)}</strong></div><div class="report-kpi"><span>Críticas</span><strong>{esc(general['criticas'] or 0)}</strong></div></div>
-          <h3>Resumen por zona</h3>
-          <table><thead><tr><th>Zona</th><th>Usuario</th><th>Municipio</th><th>Alertas</th><th>Nivel máximo</th><th>Distancia mínima</th><th>Última detección</th></tr></thead><tbody>{zona_rows}</tbody></table>
-          <div class="notice">CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales de emergencia.</div>
+          <div class="print-actions"><button onclick="window.print()">Imprimir / Guardar PDF</button><a class="button light" href="/exportar/alertas.csv">Exportar focos asociados CSV</a><a class="button light" href="/exportar/mensajes.txt">Descargar mensajes</a></div>
+          <div class="report-kpis"><div class="report-kpi"><span>Zonas activas</span><strong>{esc(total_zonas)}</strong></div><div class="report-kpi"><span>Focos FIRMS</span><strong>{esc(total_focos)}</strong></div><div class="report-kpi"><span>Zonas con alerta</span><strong>{esc(general['zonas_con_alerta'])}</strong></div><div class="report-kpi"><span>Focos asociados</span><strong>{esc(general['focos_asociados'])}</strong></div></div>
+          <h3>Resumen agrupado por zona</h3>
+          <table><thead><tr><th>Zona</th><th>Usuario</th><th>Municipio</th><th>Focos asociados</th><th>Nivel máximo</th><th>Distancia mínima</th><th>Última detección</th></tr></thead><tbody>{zona_rows}</tbody></table>
+          <div class="notice">CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales de emergencia. Una alerta equivale a una zona con riesgo; los focos asociados son los eventos FIRMS dentro del radio configurado.</div>
         </div>
         """
         return layout("Reporte", body)
     except Exception as exc:
         return error_page(exc)
-
 
 @app.get("/exportar/mensajes.txt")
 def exportar_mensajes():
