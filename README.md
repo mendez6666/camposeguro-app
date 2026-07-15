@@ -1,3 +1,25 @@
+# CampoSeguro v3.7.3 - hotfix actualización sin timeout
+
+Esta versión corrige el problema de Cloudflare 524 al presionar **Actualizar monitoreo**.
+
+## Qué cambia
+
+- `/actualizar` ya no bloquea el navegador. Inicia el monitoreo en segundo plano y responde rápido.
+- `/monitor/ejecutar` también inicia el proceso en segundo plano.
+- `/cron/monitor?token=...` devuelve rápido y deja el proceso corriendo en segundo plano.
+- Mantiene los arreglos de v3.7.1 y v3.7.2: guardar radios, PostgreSQL y CSV con separador compatible.
+
+## Cómo probar
+
+1. Sube todos los archivos a GitHub.
+2. En Render: Manual Deploy → Clear build cache & deploy.
+3. Entra a `/monitor` y presiona **Ejecutar monitoreo ahora**.
+4. Debe responder rápido. Espera 1 a 3 minutos y vuelve a `/monitor`, `/alertas` y `/mapa`.
+
+## Nota
+
+Los puntos rojos del mapa son focos FIRMS de contexto. Una alerta solo se registra si el foco está dentro del radio de una zona y dentro de la ventana de evaluación configurada.
+
 # CampoSeguro
 
 Plataforma de alerta temprana informativa de focos de calor para zonas registradas.
@@ -462,3 +484,9 @@ Recomendado:
 - `README.md`
 
 Luego en Render: Manual Deploy → Clear build cache & deploy.
+
+
+CampoSeguro v3.7.2 HOTFIX REPORTE
+- Corrige error PostgreSQL GROUP BY en /reporte y /resumen.
+- Mantiene el arreglo de guardar radio.
+- Exportaciones CSV admin ahora usan ; y BOM UTF-8 para Excel/WPS.

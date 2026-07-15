@@ -141,3 +141,31 @@ def start_background_monitor():
     t.start()
     _thread_started = True
     return True
+
+
+def start_monitor_async(trigger="manual_async"):
+    """
+    Inicia el monitoreo en un hilo de fondo y responde rápido al navegador.
+    Evita errores Cloudflare 524 en Render cuando FIRMS tarda muchos segundos.
+    """
+    status = get_auto_monitor_status()
+    if status.get("running"):
+        status["message"] = "El monitoreo ya está en ejecución. Revisa esta pantalla en unos minutos."
+        return status
+
+    def _runner():
+        run_monitor_once(trigger=trigger)
+
+    t = threading.Thread(target=_runner, name=f"camposeguro-monitor-{trigger}", daemon=True)
+    t.start()
+
+    # Marcamos estado inicial para que el usuario vea movimiento inmediatamente.
+    _last_status.update({
+        "running": True,
+        "last_trigger": trigger,
+        "last_start_utc": now_utc(),
+        "last_error": None,
+        "message": "Monitoreo iniciado en segundo plano."
+    })
+    _save_status(_last_status)
+    return dict(_last_status)

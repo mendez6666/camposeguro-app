@@ -30,10 +30,10 @@ from db import init_db, seed_demo_data, get_conn, rows_to_dicts, db_status
 from monitor import run_monitoring, clear_data, recalcular_alertas_existentes
 from emailer import preparar_correos_pendientes, procesar_correos_pendientes, estadisticas_correos, listar_correos, smtp_config_ok, enviar_correo_prueba, limpiar_correos_prueba_y_errores
 from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
-from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
+from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once, start_monitor_async
 
 
-app = FastAPI(title="CampoSeguro v3.7.1.1")
+app = FastAPI(title="CampoSeguro v3.7.3")
 
 LOGO_CAMPOSEGURO_URL = "https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png"
 
@@ -1284,36 +1284,35 @@ def monitor_panel():
 
 @app.post("/monitor/ejecutar", response_class=HTMLResponse)
 def monitor_ejecutar():
-    status = run_monitor_once(trigger="admin_button")
+    status = start_monitor_async(trigger="admin_monitor_async")
     body = f"""
-    {render_monitor_status_card(status)}
     <div class="card">
-      <p><a class="button" href="/monitor">Volver al monitor</a>
+      <h2>Monitoreo iniciado en segundo plano</h2>
+      <p>CampoSeguro está descargando focos y recalculando alertas sin bloquear el navegador.</p>
+      <p><strong>Ejecutándose ahora:</strong> {esc("Sí" if status.get("running") else "No")}</p>
+      <p><a class="button" href="/monitor">Ver estado</a>
       <a class="button light" href="/mapa">Ver mapa</a>
       <a class="button light" href="/alertas">Ver alertas</a></p>
     </div>
+    {render_monitor_status_card(status)}
     """
-    return layout("Monitor ejecutado", body)
+    return layout("Monitor iniciado", body)
 
 
 @app.get("/cron/monitor")
 def cron_monitor(token: str = ""):
     if not MONITOR_SECRET or token != MONITOR_SECRET:
         return {"ok": False, "error": "token inválido o MONITOR_SECRET no configurado"}
-    status = run_monitor_once(trigger="external_cron")
+    status = start_monitor_async(trigger="external_cron_async")
     return {
-        "ok": bool(status.get("last_success")),
+        "ok": True,
+        "mode": "async",
+        "message": status.get("message") or "monitoreo iniciado",
         "running": status.get("running"),
         "last_run_utc": status.get("last_run_utc"),
-        "focos_descargados": (status.get("last_result") or {}).get("focos_descargados", 0),
-        "focos_nuevos_guardados": (status.get("last_result") or {}).get("focos_nuevos_guardados", 0),
-        "alertas_totales": (status.get("last_result") or {}).get("alertas_totales", 0),
-        "correos_preparados": status.get("correos_preparados", 0),
-        "correos_procesados": status.get("correos_procesados", {}),
-        "error": status.get("last_error"),
+        "last_start_utc": status.get("last_start_utc"),
+        "last_error": status.get("last_error"),
     }
-
-
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1371,32 +1370,37 @@ def inicio():
 
 @app.post("/actualizar", response_class=HTMLResponse)
 def actualizar():
+    """
+    v3.7.3: antes esta ruta ejecutaba toda la descarga FIRMS dentro de la petición web.
+    En Render + Cloudflare eso puede generar 524 timeout. Ahora inicia el monitoreo
+    en segundo plano y responde rápido.
+    """
     try:
-        r = run_monitoring()
-        nuevos_correos = preparar_correos_pendientes()
-        detail = ""
-        rows = ""
-        for rep in r["reports"]:
-            if rep["error"] or rep["message"]:
-                rows += f"<tr><td>{esc(rep['source'])}</td><td>{esc(rep.get('url',''))}</td><td>{esc(rep['error'] or rep['message'])}</td></tr>"
-        if rows:
-            detail = f"<div class='card'><h3>Mensajes técnicos</h3><table><tr><th>Fuente</th><th>URL</th><th>Mensaje</th></tr>{rows}</table></div>"
-
+        status = start_monitor_async(trigger="admin_actualizar_async")
+        running = "Sí" if status.get("running") else "No"
+        msg = status.get("message") or "Monitoreo iniciado en segundo plano."
+        last_run = status.get("last_run_utc") or "Aún no disponible"
         body = f"""
         <div class="card">
-          <h2>Monitoreo actualizado</h2>
-          <p><strong>Región API:</strong> {esc(r.get('strategy_info', {}).get('api_region', 'South_America'))}</p>
-          <p><strong>Área usada:</strong> {esc(r.get('strategy_info', {}).get('selected_area', ''))}</p>
-          <p><strong>BBOX usado:</strong> {esc(r.get('strategy_info', {}).get('selected_bbox', ''))}</p>
-          <p><strong>Focos descargados:</strong> {esc(r['focos_descargados'])}</p>
-          <p><strong>Focos nuevos guardados:</strong> {esc(r['focos_nuevos_guardados'])}</p>
-          <p><strong>Alertas totales recalculadas:</strong> {esc(r['alertas_totales'])}</p>
-          <p><strong>Correos preparados:</strong> {esc(nuevos_correos)}</p>
-          <p><strong>Fecha UTC:</strong> {esc(r['fecha_utc'])}</p>
-          <p><a class="button" href="/mapa">Ver mapa</a> <a class="button light" href="/alertas">Ver alertas</a> <a class="button light" href="/correos">Ver correos</a> <a class="button light" href="/monitor">Ver monitor</a></p>
-        </div>{detail}
+          <h2>Monitoreo iniciado</h2>
+          <p><strong>Estado:</strong> {esc(msg)}</p>
+          <p><strong>Ejecutándose ahora:</strong> {esc(running)}</p>
+          <p><strong>Última ejecución registrada:</strong> {esc(last_run)}</p>
+          <div class="notice">
+            El proceso descarga FIRMS y recalcula alertas en segundo plano. No cierres ni fuerces esta página; revisa el Monitor en 1 a 3 minutos.
+          </div>
+          <p>
+            <a class="button" href="/monitor">Ver monitor</a>
+            <a class="button light" href="/mapa">Ver mapa</a>
+            <a class="button light" href="/alertas">Ver alertas</a>
+          </p>
+        </div>
+        <div class="card">
+          <h2>Importante</h2>
+          <p>Los puntos rojos del mapa son <strong>focos de contexto FIRMS</strong>. Una alerta solo aparece si el foco está dentro del radio configurado de una zona y dentro de la ventana de evaluación.</p>
+        </div>
         """
-        return layout("Resultado", body)
+        return layout("Monitoreo iniciado", body)
     except Exception as exc:
         return error_page(exc)
 
