@@ -1,24 +1,12 @@
-CampoSeguro v3.8 — Alertas agrupadas profesionales
+CampoSeguro v3.8.1 - paquete limpio para GitHub/Render
 
-Qué mejora esta versión:
-- Cambia la lectura de alertas: una alerta representa una zona con riesgo.
-- Muestra cuántos focos FIRMS están asociados a cada alerta/zona.
-- El mapa resalta los focos que sí generaron alerta con marcador amarillo y borde oscuro.
-- El Resumen, Alertas y Reporte ahora explican mejor la diferencia entre focos de contexto y focos asociados.
-- Mantiene el monitoreo sin timeout de v3.7.3.
+IMPORTANTE:
+- Sube SOLO estos archivos a la raíz del repositorio.
+- No subas la carpeta __pycache__.
+- No subas una carpeta v38work/v381 dentro del repositorio.
+- En GitHub deben quedar app.py, config.py, db.py, emailer.py, firms_api.py, monitor.py, auto_monitor.py, requirements.txt y runtime.txt directamente en la raíz.
 
-Archivos principales para subir a GitHub:
-1) app.py
-2) README.md
+Después de subir:
+Render -> Manual Deploy -> Clear build cache & deploy.
 
-Si quieres subir todo, también puedes subir todos los archivos de esta carpeta.
-
-Después de subir a GitHub:
-- Render -> Manual Deploy -> Clear build cache & deploy.
-- Entrar a /monitor y verificar que termine.
-- Revisar /mapa, /alertas, /resumen y /reporte.
-
-Lectura correcta:
-- Focos FIRMS: todos los puntos descargados para contexto.
-- Zonas con alerta: zonas que tienen al menos un foco dentro de su radio.
-- Focos asociados: puntos FIRMS que están dentro del radio configurado de una zona.
+Si vuelve a salir Internal Server Error, abre Render -> Logs, entra a https://app.camposeguro.app/ y copia el traceback rojo.

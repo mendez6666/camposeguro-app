@@ -1,4 +1,4 @@
-# CAMPOSEGURO_V38_ALERTAS_AGRUPADAS_PRO
+# CAMPOSEGURO_V381_LIMPIO_SOLO_RAIZ
 from datetime import datetime, timezone
 import html
 import json
@@ -33,7 +33,7 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once, start_monitor_async
 
 
-app = FastAPI(title="CampoSeguro v3.8")
+app = FastAPI(title="CampoSeguro v3.8.1")
 
 LOGO_CAMPOSEGURO_URL = "https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png"
 
@@ -594,6 +594,24 @@ function usarUbicacionActual() {{
 
 def error_page(exc):
     return HTMLResponse(layout("Error", f"<div class='card'><h2>Error</h2><pre>{esc(traceback.format_exc())}</pre></div>"), status_code=500)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # Pantalla de diagnóstico amigable para evitar el texto genérico Internal Server Error.
+    tb = traceback.format_exc()
+    safe_body = f"""
+    <div class='card'>
+      <h2>Error interno CampoSeguro</h2>
+      <p class='notice'>La aplicación está viva, pero una página generó un error. Copia este bloque para corregirlo.</p>
+      <pre>{esc(tb)}</pre>
+      <p><a class='button' href='/healthz'>Ver healthz</a> <a class='button light' href='/login'>Volver al acceso</a></p>
+    </div>
+    """
+    try:
+        return HTMLResponse(layout("Error CampoSeguro", safe_body), status_code=500)
+    except Exception:
+        return HTMLResponse("Error interno CampoSeguro. Revisar logs de Render.", status_code=500)
 
 
 STARTUP_DB_ERROR = None

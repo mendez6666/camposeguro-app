@@ -1,4 +1,4 @@
-# CampoSeguro v3.8 — Alertas agrupadas profesionales
+# CampoSeguro v3.8.1 — Alertas agrupadas profesionales
 
 Versión orientada a que el cliente entienda correctamente la diferencia entre **focos FIRMS de contexto** y **alertas operativas por zona**.
 
