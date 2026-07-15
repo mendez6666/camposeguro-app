@@ -120,3 +120,14 @@ try:
 except NameError:
     EMAIL_API_TIMEOUT_SECONDS = int(os.getenv("EMAIL_API_TIMEOUT_SECONDS", "18"))
 
+
+
+# CampoSeguro v3.7 - alcance de vista cliente
+# Si CLIENT_USER_ID > 0, la vista cliente muestra solo las zonas/alertas de ese usuario.
+# Si CLIENT_EMAIL está configurado, filtra por correo del usuario o correo de contacto de zona.
+# Si ambos están vacíos, la vista cliente muestra el piloto general.
+try:
+    CLIENT_USER_ID = int(os.getenv("CLIENT_USER_ID", "0") or "0")
+except Exception:
+    CLIENT_USER_ID = 0
+CLIENT_EMAIL = os.getenv("CLIENT_EMAIL", "").strip().lower()

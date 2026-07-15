@@ -1,4 +1,4 @@
-# CAMPOSEGURO_LOGO_COMPACTO_PRO_364
+# CAMPOSEGURO_PILOTO_CLIENTE_REAL_370
 from datetime import datetime, timezone
 import html
 import json
@@ -20,7 +20,7 @@ from config import (
     EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_SSL, SMTP_USE_TLS, SMTP_USER, SMTP_FROM, EMAIL_REPLY_TO, EMAIL_PROVIDER, RESEND_API_KEY, EMAIL_API_TIMEOUT_SECONDS,
     AUTH_ENABLED, ADMIN_USER, ADMIN_PASSWORD, SESSION_SECRET,
     AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS,
-    CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME,
+    CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME, CLIENT_USER_ID, CLIENT_EMAIL,
     DEFAULT_ZONE_RADIUS_KM, CLIENT_MIN_RADIUS_KM, CLIENT_MAX_RADIUS_KM,
     EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE, EMAIL_SEND_TIMEOUT_SECONDS, EMAIL_PROCESS_LIMIT, EMAIL_DAILY_MAX_PER_RECIPIENT, EMAIL_SUMMARY_MAX_ALERTS,
     AUTO_MONITOR_ENABLED, AUTO_MONITOR_INTERVAL_MINUTES, AUTO_MONITOR_RUN_ON_STARTUP,
@@ -33,7 +33,7 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once
 
 
-app = FastAPI(title="CampoSeguro v3.6.4.3.2")
+app = FastAPI(title="CampoSeguro v3.7")
 
 LOGO_CAMPOSEGURO_URL = "https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png"
 
@@ -549,6 +549,48 @@ def clamp_radio_cliente(radio):
     return max(CLIENT_MIN_RADIUS_KM, min(CLIENT_MAX_RADIUS_KM, r))
 
 
+def client_filter_clause(z_alias="z", u_alias="u"):
+    """
+    Define el alcance real de la vista cliente.
+    - CLIENT_USER_ID: recomendado para piloto comercial, usa el ID del usuario en /usuarios.
+    - CLIENT_EMAIL: alternativa por correo.
+    - Sin configurar: modo piloto general, muestra todo.
+    """
+    if int(CLIENT_USER_ID or 0) > 0:
+        return f"{z_alias}.usuario_id=?", [int(CLIENT_USER_ID)], f"Usuario ID {int(CLIENT_USER_ID)}"
+    email = (CLIENT_EMAIL or "").strip().lower()
+    if email:
+        return (
+            f"(LOWER(COALESCE({u_alias}.email,''))=? OR LOWER(COALESCE({z_alias}.contacto_email,''))=?)",
+            [email, email],
+            email,
+        )
+    return "1=1", [], "Piloto general"
+
+
+def client_scope_notice():
+    if int(CLIENT_USER_ID or 0) > 0:
+        return f"Vista filtrada por usuario ID {int(CLIENT_USER_ID)}."
+    if CLIENT_EMAIL:
+        return f"Vista filtrada por correo {esc(CLIENT_EMAIL)}."
+    return "Modo piloto general: la vista cliente muestra todas las zonas activas."
+
+
+def cliente_zona_update_sql():
+    where, params, _ = client_filter_clause("z", "u")
+    sql = f"""
+        UPDATE zonas SET radio_km=?
+        WHERE id=? AND activa=1
+        AND id IN (
+            SELECT z.id FROM zonas z
+            LEFT JOIN usuarios u ON u.id=z.usuario_id
+            WHERE {where}
+        )
+    """
+    return sql, params
+
+
+
 
 def layout_cliente(title, body):
     return f"""<!doctype html>
@@ -636,22 +678,49 @@ th {{ background:#eef5f0; }}
 
 
 def cliente_metricas():
+    where, params, etiqueta = client_filter_clause("z", "u")
     conn = get_conn()
-    zonas = conn.execute("SELECT COUNT(*) AS n FROM zonas WHERE activa=1").fetchone()["n"]
-    focos = conn.execute("SELECT COUNT(*) AS n FROM focos").fetchone()["n"]
-    alertas = conn.execute("SELECT COUNT(*) AS n FROM alertas").fetchone()["n"]
-    criticas = conn.execute("SELECT COUNT(*) AS n FROM alertas WHERE nivel='CRITICO'").fetchone()["n"]
+    zonas = conn.execute(f"""
+        SELECT COUNT(*) AS n
+        FROM zonas z LEFT JOIN usuarios u ON u.id=z.usuario_id
+        WHERE z.activa=1 AND {where}
+    """, params).fetchone()["n"]
+
+    alertas = conn.execute(f"""
+        SELECT COUNT(*) AS n
+        FROM alertas a
+        JOIN zonas z ON z.id=a.zona_id
+        LEFT JOIN usuarios u ON u.id=z.usuario_id
+        WHERE {where}
+    """, params).fetchone()["n"]
+
+    criticas = conn.execute(f"""
+        SELECT COUNT(*) AS n
+        FROM alertas a
+        JOIN zonas z ON z.id=a.zona_id
+        LEFT JOIN usuarios u ON u.id=z.usuario_id
+        WHERE a.nivel='CRITICO' AND {where}
+    """, params).fetchone()["n"]
+
+    focos_asociados = conn.execute(f"""
+        SELECT COUNT(DISTINCT a.foco_id) AS n
+        FROM alertas a
+        JOIN zonas z ON z.id=a.zona_id
+        LEFT JOIN usuarios u ON u.id=z.usuario_id
+        WHERE {where}
+    """, params).fetchone()["n"]
+
     conn.close()
-    return zonas, focos, alertas, criticas
+    return zonas, focos_asociados, alertas, criticas, etiqueta
 
 
 @app.get("/cliente", response_class=HTMLResponse)
 def cliente_inicio():
-    zonas, focos, alertas, criticas = cliente_metricas()
+    zonas, focos, alertas, criticas, etiqueta = cliente_metricas()
     body = f"""
     <section class="hero">
       <h2>Panel de seguimiento</h2>
-      <p>Consulta el mapa, revisa alertas registradas y descarga información operativa de manera simple. Esta vista es solo de lectura.</p>
+      <p>Consulta tu mapa, ajusta radios de alerta, revisa alertas registradas y descarga un reporte operativo simple.</p>
       <p>
         <a class="button" href="/cliente/mapa">Ver mapa</a>
         <a class="button light" href="/cliente/zonas">Ajustar radios</a>
@@ -659,10 +728,11 @@ def cliente_inicio():
         <a class="button light" href="/cliente/reporte">Ver reporte</a>
       </p>
     </section>
+    <div class="notice">{client_scope_notice()}</div>
     <section class="grid">
-      <div class="card"><div class="metric-label">Zonas monitoreadas</div><div class="metric">{zonas}</div></div>
-      <div class="card"><div class="metric-label">Focos FIRMS</div><div class="metric">{focos}</div></div>
-      <div class="card"><div class="metric-label">Alertas registradas</div><div class="metric">{alertas}</div></div>
+      <div class="card"><div class="metric-label">Mis zonas monitoreadas</div><div class="metric">{zonas}</div></div>
+      <div class="card"><div class="metric-label">Focos asociados</div><div class="metric">{focos}</div></div>
+      <div class="card"><div class="metric-label">Mis alertas</div><div class="metric">{alertas}</div></div>
       <div class="card"><div class="metric-label">Críticas</div><div class="metric">{criticas}</div></div>
     </section>
     <div class="notice">CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales de emergencia.</div>
@@ -670,16 +740,16 @@ def cliente_inicio():
     return layout_cliente("CampoSeguro | Cliente", body)
 
 
-
 @app.get("/cliente/zonas", response_class=HTMLResponse)
 def cliente_zonas():
+    where, params, etiqueta = client_filter_clause("z", "u")
     conn = get_conn()
-    zonas = rows_to_dicts(conn.execute("""
+    zonas = rows_to_dicts(conn.execute(f"""
         SELECT z.*, u.nombre AS usuario_nombre
         FROM zonas z LEFT JOIN usuarios u ON u.id=z.usuario_id
-        WHERE z.activa=1
+        WHERE z.activa=1 AND {where}
         ORDER BY z.nombre_zona ASC
-    """).fetchall())
+    """, params).fetchall())
     conn.close()
 
     rows = ""
@@ -697,6 +767,8 @@ def cliente_zonas():
           </td>
         </tr>
         """
+    if not rows:
+        rows = "<tr><td colspan='3'>No hay zonas asignadas a este cliente.</td></tr>"
 
     body = f"""
     <div class="card">
@@ -717,30 +789,40 @@ def cliente_zonas():
 @app.post("/cliente/zonas/radio")
 def cliente_zona_radio(zona_id: int = Form(...), radio_km: float = Form(...)):
     radio = clamp_radio_cliente(radio_km)
+    sql, params = cliente_zona_update_sql()
     conn = get_conn()
-    conn.execute("UPDATE zonas SET radio_km=? WHERE id=? AND activa=1", (radio, zona_id))
+    conn.execute(sql, [radio, zona_id] + params)
     conn.commit()
     conn.close()
     recalcular_alertas_existentes()
     return RedirectResponse("/cliente/zonas", status_code=303)
 
 
-
 @app.get("/cliente/mapa", response_class=HTMLResponse)
 def cliente_mapa():
     try:
+        where, params, etiqueta = client_filter_clause("z", "u")
         conn = get_conn()
-        zonas = rows_to_dicts(conn.execute("""
+        zonas = rows_to_dicts(conn.execute(f"""
             SELECT z.*, u.nombre AS usuario_nombre
             FROM zonas z LEFT JOIN usuarios u ON u.id=z.usuario_id
-            WHERE z.activa=1
-        """).fetchall())
+            WHERE z.activa=1 AND {where}
+            ORDER BY z.nombre_zona ASC
+        """, params).fetchall())
+
         focos = rows_to_dicts(conn.execute("""
             SELECT * FROM focos
             ORDER BY acq_date DESC, acq_time DESC
             LIMIT 10000
         """).fetchall())
-        total_alertas = conn.execute("SELECT COUNT(*) AS n FROM alertas").fetchone()["n"]
+
+        total_alertas = conn.execute(f"""
+            SELECT COUNT(*) AS n
+            FROM alertas a
+            JOIN zonas z ON z.id=a.zona_id
+            LEFT JOIN usuarios u ON u.id=z.usuario_id
+            WHERE {where}
+        """, params).fetchone()["n"]
         conn.close()
 
         body = f"""
@@ -748,32 +830,38 @@ def cliente_mapa():
         main {{ padding:0; }}
         #map {{ height:calc(100vh - 126px); width:100%; }}
         .panel {{
-          position:absolute; z-index:1000; background:white; padding:14px 16px;
-          top:148px; left:16px; border-radius:16px; box-shadow:0 8px 28px rgba(0,0,0,.2);
-          max-width:320px; font-size:15px;
+          position:absolute; z-index:1000; background:white; padding:10px 12px;
+          top:148px; left:16px; border-radius:14px; box-shadow:0 8px 28px rgba(0,0,0,.18);
+          max-width:260px; font-size:13px; line-height:1.25;
         }}
-        .legend-dot {{ display:inline-block; width:12px; height:12px; border-radius:50%; margin-right:6px; }}
-        .legend-line {{ display:inline-block; width:18px; height:12px; border:3px solid #2563eb; border-radius:50%; margin-right:6px; vertical-align:middle; }}
-        .active-mode {{ background:#dcfce7; color:#14532d; padding:7px 9px; border-radius:9px; display:inline-block; margin-top:8px; font-weight:900; }}
+        .legend-dot {{ display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }}
+        .legend-line {{ display:inline-block; width:18px; height:11px; border:3px solid #2563eb; border-radius:50%; margin-right:6px; vertical-align:middle; }}
+        .active-mode {{ background:#dcfce7; color:#14532d; padding:6px 8px; border-radius:9px; display:inline-block; margin-top:8px; font-weight:900; }}
         .map-toolbar {{
-          position:absolute; z-index:1000; background:white; padding:14px; top:148px; right:16px;
-          border-radius:16px; box-shadow:0 8px 28px rgba(0,0,0,.18); max-width:300px;
+          position:absolute; z-index:1000; background:white; padding:12px; top:148px; right:16px;
+          border-radius:14px; box-shadow:0 8px 28px rgba(0,0,0,.16); max-width:280px; font-size:13px;
         }}
         .map-toolbar button {{
-          padding:10px 14px; font-size:14px; margin:4px; border-radius:12px; border:0;
+          padding:9px 12px; font-size:13px; margin:4px; border-radius:12px; border:0;
           font-weight:900; cursor:pointer; background:#e9f5ee; color:#14532d;
         }}
-        .map-status {{ font-size:13px; color:#334155; margin-top:10px; line-height:1.35; }}
+        .map-status {{ font-size:12px; color:#334155; margin-top:8px; line-height:1.35; }}
+        .leaflet-bottom.leaflet-right {{ margin-bottom:18px; margin-right:16px; }}
+        .leaflet-control-zoom {{ box-shadow:0 6px 18px rgba(0,0,0,.18); border-radius:10px; overflow:hidden; }}
+        @media(max-width:700px) {{
+          .panel {{ left:10px; top:132px; max-width:210px; font-size:12px; }}
+          .map-toolbar {{ right:10px; top:132px; max-width:210px; }}
+        }}
         </style>
 
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
         <div class="panel">
           <strong>CampoSeguro</strong><br>
-          Área operativa: Bolivia<br>
+          Vista cliente<br>
           Zonas: {len(zonas)}<br>
           Focos FIRMS: {len(focos)}<br>
-          Alertas registradas: {total_alertas}<hr>
+          Mis alertas: {total_alertas}<hr>
           <span class="legend-line"></span>Zona monitoreada<br>
           <span class="legend-dot" style="background:#f97316"></span>Foco MODIS<br>
           <span class="legend-dot" style="background:#dc2626"></span>Foco VIIRS<br>
@@ -785,7 +873,7 @@ def cliente_mapa():
           <button onclick="verZonas()">Zonas</button>
           <button onclick="verFocos()">Focos</button>
           <button onclick="verTodo()">Todo</button>
-          <div class="map-status">Mapa simple para consulta. Las alertas están en la pestaña Mis alertas.</div>
+          <div class="map-status">Solo se muestran tus zonas asignadas. Los focos son contexto regional FIRMS.</div>
         </div>
 
         <div id="map"></div>
@@ -811,6 +899,7 @@ def cliente_mapa():
 
         const layerZonas = L.layerGroup().addTo(map);
         const layerFocos = L.layerGroup().addTo(map);
+        const zoneBounds = [];
 
         function focoColor(fuente) {{
           return (fuente || '').includes('VIIRS') ? '#dc2626' : '#f97316';
@@ -822,20 +911,22 @@ def cliente_mapa():
         }}
 
         zonas.forEach(z => {{
+          zoneBounds.push([z.latitud, z.longitud]);
+
           L.circle([z.latitud, z.longitud], {{
             pane:'zonasPane',
             radius:z.radio_km*1000,
             color:'#2563eb',
-            weight:4,
+            weight:3,
             fillColor:'#2563eb',
-            fillOpacity:0.05
+            fillOpacity:0.04
           }})
           .addTo(layerZonas)
           .bindPopup(`<b>Zona monitoreada</b><br>${{z.nombre_zona}}<br><b>Municipio:</b> ${{z.municipio || ''}}<br><b>Radio:</b> ${{z.radio_km}} km`);
 
           L.circleMarker([z.latitud, z.longitud], {{
             pane:'zonasPane',
-            radius:7,
+            radius:6,
             color:'#1d4ed8',
             fillColor:'#1d4ed8',
             fillOpacity:0.9,
@@ -850,11 +941,11 @@ def cliente_mapa():
           L.circleMarker([f.latitude, f.longitude], {{
             renderer: canvasRenderer,
             pane:'focosPane',
-            radius:4,
+            radius:3.6,
             color:color,
             fillColor:color,
-            fillOpacity:0.70,
-            opacity:0.85,
+            fillOpacity:0.68,
+            opacity:0.82,
             weight:1
           }})
           .addTo(layerFocos)
@@ -883,6 +974,10 @@ def cliente_mapa():
         }}
 
         verTodo();
+
+        if (zoneBounds.length > 0) {{
+          map.fitBounds(zoneBounds, {{ padding:[80,80], maxZoom:7 }});
+        }}
         </script>
         """
         return layout_cliente("CampoSeguro | Mapa cliente", body)
@@ -892,16 +987,20 @@ def cliente_mapa():
 
 @app.get("/cliente/alertas", response_class=HTMLResponse)
 def cliente_alertas():
+    where, params, etiqueta = client_filter_clause("z", "u")
     conn = get_conn()
-    alertas = rows_to_dicts(conn.execute("""
-        SELECT a.*, z.nombre_zona, z.municipio, f.fuente, f.acq_date, f.acq_time
+    alertas = rows_to_dicts(conn.execute(f"""
+        SELECT a.*, z.nombre_zona, z.municipio, u.nombre AS usuario_nombre,
+               f.fuente, f.acq_date, f.acq_time, f.latitude, f.longitude
         FROM alertas a
         JOIN zonas z ON z.id=a.zona_id
+        LEFT JOIN usuarios u ON u.id=z.usuario_id
         JOIN focos f ON f.id=a.foco_id
+        WHERE {where}
         ORDER BY CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END,
                  a.distancia_km ASC
         LIMIT 100
-    """).fetchall())
+    """, params).fetchall())
     conn.close()
 
     cards = ""
@@ -923,13 +1022,15 @@ def cliente_alertas():
                 <div><strong>Fecha</strong><br>{esc(a['acq_date'])} {esc(a['acq_time'])}</div>
               </div>
               <div class="message-box">{msg}</div>
+              <p><a class="button light" target="_blank" href="https://www.google.com/maps?q={esc(a['latitude'])},{esc(a['longitude'])}">Abrir foco en Google Maps</a></p>
             </div>
             """
 
     body = f"""
     <div class="card">
       <h2>Mis alertas</h2>
-      <p>Alertas informativas generadas por cercanía de focos de calor a zonas monitoreadas.</p>
+      <p>Alertas informativas generadas por cercanía de focos de calor a tus zonas monitoreadas.</p>
+      <div class="notice">{client_scope_notice()}</div>
     </div>
     <div class="alert-grid">{cards}</div>
     """
@@ -938,24 +1039,44 @@ def cliente_alertas():
 
 @app.get("/cliente/reporte", response_class=HTMLResponse)
 def cliente_reporte():
+    where, params, etiqueta = client_filter_clause("z", "u")
     conn = get_conn()
     k = {
-        "zonas": conn.execute("SELECT COUNT(*) AS n FROM zonas WHERE activa=1").fetchone()["n"],
-        "focos": conn.execute("SELECT COUNT(*) AS n FROM focos").fetchone()["n"],
-        "alertas": conn.execute("SELECT COUNT(*) AS n FROM alertas").fetchone()["n"],
-        "criticas": conn.execute("SELECT COUNT(*) AS n FROM alertas WHERE nivel='CRITICO'").fetchone()["n"],
+        "zonas": conn.execute(f"""
+            SELECT COUNT(*) AS n FROM zonas z LEFT JOIN usuarios u ON u.id=z.usuario_id
+            WHERE z.activa=1 AND {where}
+        """, params).fetchone()["n"],
+        "focos": conn.execute(f"""
+            SELECT COUNT(DISTINCT a.foco_id) AS n
+            FROM alertas a JOIN zonas z ON z.id=a.zona_id
+            LEFT JOIN usuarios u ON u.id=z.usuario_id
+            WHERE {where}
+        """, params).fetchone()["n"],
+        "alertas": conn.execute(f"""
+            SELECT COUNT(*) AS n
+            FROM alertas a JOIN zonas z ON z.id=a.zona_id
+            LEFT JOIN usuarios u ON u.id=z.usuario_id
+            WHERE {where}
+        """, params).fetchone()["n"],
+        "criticas": conn.execute(f"""
+            SELECT COUNT(*) AS n
+            FROM alertas a JOIN zonas z ON z.id=a.zona_id
+            LEFT JOIN usuarios u ON u.id=z.usuario_id
+            WHERE a.nivel='CRITICO' AND {where}
+        """, params).fetchone()["n"],
     }
-    resumen = rows_to_dicts(conn.execute("""
-        SELECT z.nombre_zona, z.municipio,
+    resumen = rows_to_dicts(conn.execute(f"""
+        SELECT z.id, z.nombre_zona, z.municipio,
                COUNT(a.id) AS alertas,
                MIN(a.distancia_km) AS distancia_minima,
                MAX(CASE WHEN a.nivel='CRITICO' THEN 3 WHEN a.nivel='ATENCION' THEN 2 ELSE 1 END) AS prioridad
         FROM zonas z
+        LEFT JOIN usuarios u ON u.id=z.usuario_id
         LEFT JOIN alertas a ON a.zona_id=z.id
-        WHERE z.activa=1
-        GROUP BY z.id
+        WHERE z.activa=1 AND {where}
+        GROUP BY z.id, z.nombre_zona, z.municipio
         ORDER BY alertas DESC, z.nombre_zona ASC
-    """).fetchall())
+    """, params).fetchall())
     conn.close()
 
     rows = ""
@@ -973,15 +1094,19 @@ def cliente_reporte():
           <td>{esc(distancia)}</td>
         </tr>
         """
+    if not rows:
+        rows = "<tr><td colspan='5'>No hay zonas asignadas para este cliente.</td></tr>"
 
     body = f"""
     <div class="card">
       <h2>Reporte CampoSeguro</h2>
       <p>Resumen informativo para seguimiento preventivo.</p>
+      <p><a class="button" href="/cliente/reporte.csv">Descargar CSV</a> <a class="button light" href="/cliente/mapa">Ver mapa</a></p>
+      <div class="notice">{client_scope_notice()}</div>
     </div>
     <section class="grid">
       <div class="card"><div class="metric-label">Zonas</div><div class="metric">{k['zonas']}</div></div>
-      <div class="card"><div class="metric-label">Focos</div><div class="metric">{k['focos']}</div></div>
+      <div class="card"><div class="metric-label">Focos asociados</div><div class="metric">{k['focos']}</div></div>
       <div class="card"><div class="metric-label">Alertas</div><div class="metric">{k['alertas']}</div></div>
       <div class="card"><div class="metric-label">Críticas</div><div class="metric">{k['criticas']}</div></div>
     </section>
@@ -997,6 +1122,40 @@ def cliente_reporte():
     return layout_cliente("CampoSeguro | Reporte cliente", body)
 
 
+@app.get("/cliente/reporte.csv")
+def cliente_reporte_csv():
+    where, params, etiqueta = client_filter_clause("z", "u")
+    conn = get_conn()
+    rows = rows_to_dicts(conn.execute(f"""
+        SELECT z.nombre_zona, z.municipio, a.nivel, a.distancia_km,
+               f.fuente, f.acq_date, f.acq_time, f.latitude, f.longitude
+        FROM alertas a
+        JOIN zonas z ON z.id=a.zona_id
+        LEFT JOIN usuarios u ON u.id=z.usuario_id
+        JOIN focos f ON f.id=a.foco_id
+        WHERE {where}
+        ORDER BY CASE WHEN a.nivel='CRITICO' THEN 1 WHEN a.nivel='ATENCION' THEN 2 ELSE 3 END,
+                 a.distancia_km ASC
+        LIMIT 1000
+    """, params).fetchall())
+    conn.close()
+
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["zona", "municipio", "nivel", "distancia_km", "fuente", "fecha", "hora", "latitud", "longitud", "google_maps"])
+    for r in rows:
+        writer.writerow([
+            r["nombre_zona"], r["municipio"], r["nivel"], r["distancia_km"],
+            r["fuente"], r["acq_date"], r["acq_time"], r["latitude"], r["longitude"],
+            f"https://www.google.com/maps?q={r['latitude']},{r['longitude']}",
+        ])
+
+    filename = "camposeguro_reporte_cliente.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
 
 
 
@@ -1512,7 +1671,7 @@ def usuarios():
             estado = "Activo" if u["activo"] else "Inactivo"
             cards += f"""
             <div class="user-card">
-              <h3>{esc(u['nombre'])}</h3>
+              <h3>{esc(u['nombre'])}</h3><p><strong>ID usuario:</strong> {esc(u['id'])}</p>
               <p><strong>Tipo:</strong> {esc(u['tipo_usuario'] or '')}</p>
               <p><strong>Organización:</strong> {esc(u['organizacion'] or '')}</p>
               <p><strong>Correo:</strong> {esc(u['email'] or '')}</p>
@@ -1528,7 +1687,7 @@ def usuarios():
         body = f"""
         <div class="card">
           <h2>Usuarios y responsables</h2>
-          <p>Registra personas, responsables de predios, comunidades o instituciones.</p>
+          <p>Registra personas, responsables de predios, comunidades o instituciones.</p><div class='notice'>Para un piloto real: crea o edita el usuario, copia su <strong>ID usuario</strong> y ponlo en Render como <strong>CLIENT_USER_ID</strong>. Así el cliente verá solo sus zonas y alertas.</div>
           <p><a class="button" href="/usuarios/nuevo">Nuevo usuario</a></p>
         </div>
         <div class="user-grid">{cards}</div>

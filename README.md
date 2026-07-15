@@ -285,3 +285,164 @@ Recomendación de despliegue:
 3. Hacer `Manual Deploy -> Clear build cache & deploy`.
 4. Entrar a `/diagnostico-arranque`.
 5. Si todo está bien, activar `EMAIL_ENABLED=true` y probar `/correos`.
+
+## Versión 3.4 - Correos seguros y limpieza de pruebas
+
+Corrige el problema de timeouts al procesar correos pendientes y evita enviar a direcciones de prueba como `correo@ejemplo.com`.
+
+Incluye:
+- Botón `Limpiar pruebas/errores` en `/correos`.
+- Bloqueo automático de correos `@ejemplo.com` y `@example.com`.
+- Procesamiento seguro por lotes pequeños: `EMAIL_PROCESS_LIMIT=3`.
+- Timeout configurable: `EMAIL_SEND_TIMEOUT_SECONDS=20`.
+- Mantiene Resend SMTP con `alertas@camposeguro.app`.
+
+Después de desplegar:
+1. Entrar a `/correos`.
+2. Presionar `Limpiar pruebas/errores`.
+3. Verificar usuarios reales en `/usuarios`.
+4. Presionar `Preparar correos`.
+5. Presionar `Procesar pendientes seguros`.
+
+
+## Versión 3.5 - Resend API estable
+
+Esta versión cambia el envío recomendado de SMTP a Resend API HTTPS para evitar cuelgues o timeouts al procesar correos pendientes en Render/Cloudflare.
+
+Variables recomendadas en Render:
+
+EMAIL_ENABLED=true
+EMAIL_PROVIDER=resend_api
+RESEND_API_KEY=tu_api_key_completa_de_resend
+SMTP_FROM=CampoSeguro <alertas@camposeguro.app>
+EMAIL_REPLY_TO=mmendez@sbda.org.bo
+EMAIL_API_TIMEOUT_SECONDS=18
+
+Las variables SMTP pueden quedar como respaldo, pero el envío principal usa la API HTTPS de Resend.
+
+
+## CampoSeguro v3.5.1 - Hotfix config Resend API
+
+Corrige el error de Render:
+ImportError: cannot import name 'RESEND_API_KEY' from 'config'
+
+Variables recomendadas en Render:
+EMAIL_ENABLED=true
+EMAIL_PROVIDER=resend_api
+RESEND_API_KEY=re_...tu_api_key_completa_de_resend...
+SMTP_FROM=CampoSeguro <alertas@camposeguro.app>
+EMAIL_REPLY_TO=mmendez@sbda.org.bo
+EMAIL_API_TIMEOUT_SECONDS=18
+
+Luego usar:
+Manual Deploy -> Clear build cache & deploy
+
+
+## CampoSeguro v3.5.2 - Hotfix limpiar correos
+
+Corrige la ruta /correos/limpiar-pruebas para que funcione también por GET.
+Esto evita el error {"detail":"Not Found"} cuando se abre directamente la ruta o el botón actúa como enlace.
+
+Después de subir a GitHub:
+1. Verificar en app.py que exista: /correos/limpiar-pruebas
+2. Render -> Manual Deploy -> Clear build cache & deploy
+3. Entrar a /correos
+4. Presionar Limpiar pruebas/errores
+5. Enviar prueba a un correo real
+
+
+## CampoSeguro v3.6 - Resumen inteligente de alertas
+
+Mejoras principales:
+- Envío de un solo correo resumen por destinatario.
+- Agrupación de alertas por zona.
+- Correo HTML profesional con métricas, zonas y botones a Google Maps.
+- Respaldo en texto plano para compatibilidad.
+- Límite diario por destinatario: EMAIL_DAILY_MAX_PER_RECIPIENT.
+- Máximo de alertas visibles por resumen: EMAIL_SUMMARY_MAX_ALERTS.
+- Mantiene protección anti-saturación y bloqueo de correos de ejemplo.
+
+Variables nuevas recomendadas en Render:
+APP_PUBLIC_URL=https://app.camposeguro.app
+EMAIL_PROVIDER=resend_api
+EMAIL_SUMMARY_MAX_ALERTS=20
+EMAIL_DAILY_MAX_PER_RECIPIENT=4
+
+Para instalar: subir app.py, emailer.py, config.py, requirements.txt y hacer Clear build cache & deploy en Render.
+
+
+## CampoSeguro v3.6.2 - Fix definitivo logo y zoom
+
+Cambios:
+- Agrega LOGO_CAMPOSEGURO_URL = https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png
+- Muestra logo en login, panel administrador y vista cliente.
+- Mueve el zoom (+ / -) de Leaflet a abajo a la derecha con zoomControl:false.
+- Incluye marcador de verificación: CAMPOSEGURO_LOGO_ZOOM_FIX_362.
+
+Para verificar en GitHub:
+1. Abrir app.py
+2. Buscar: CAMPOSEGURO_LOGO_ZOOM_FIX_362
+3. Buscar: LOGO_CAMPOSEGURO_URL
+4. Buscar: bottomright
+
+Para desplegar:
+Render -> Manual Deploy -> Clear build cache & deploy.
+
+
+## CampoSeguro v3.6.3 - Corrección definitiva NameError logo
+
+Corrige el error de Render:
+NameError: name 'LOGO_CAMPOSEGURO_URL' is not defined.
+
+Cambios:
+- El HTML usa directamente el URL del logo: https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png
+- Se mantiene el zoom del mapa abajo a la derecha.
+- Marcador de verificación en app.py: CAMPOSEGURO_LOGO_RUNTIME_FIX_363
+
+Subir mínimo:
+- app.py
+
+Luego:
+Render -> Manual Deploy -> Clear build cache & deploy
+
+
+## CampoSeguro v3.6.4 - Logo compacto profesional
+
+Cambios:
+- El logo ya no ocupa una cabecera gigante.
+- El logo queda pequeño, alineado a la izquierda.
+- La cabecera vuelve a ser compacta y profesional.
+- El control + / - del mapa queda abajo a la derecha.
+- Marcador de verificación en app.py: CAMPOSEGURO_LOGO_COMPACTO_PRO_364
+
+Subir mínimo:
+- app.py
+
+Luego:
+Render -> Manual Deploy -> Clear build cache & deploy.
+
+
+## CampoSeguro v3.7 - Piloto cliente real
+
+Cambios principales:
+- Vista cliente filtrable por usuario real usando `CLIENT_USER_ID`.
+- Alternativa de filtrado por correo usando `CLIENT_EMAIL`.
+- El cliente ve solo sus zonas, sus alertas y su reporte.
+- El mapa cliente muestra solo zonas asignadas al cliente y focos FIRMS como contexto regional.
+- El cliente puede ajustar radios por zona dentro del rango permitido.
+- Reporte CSV descargable en `/cliente/reporte.csv`.
+- La página `/usuarios` muestra el ID de cada usuario para configurar el piloto en Render.
+
+Variables nuevas recomendadas en Render:
+- `CLIENT_USER_ID=ID_DEL_USUARIO`
+- `CLIENT_EMAIL=` solo si prefieres filtrar por correo
+- `CLIENT_MIN_RADIUS_KM=1`
+- `CLIENT_MAX_RADIUS_KM=50`
+
+Flujo recomendado:
+1. Entrar como admin.
+2. Ir a Usuarios y crear/editar el cliente real.
+3. Copiar su ID usuario.
+4. Ir a Render > Environment y poner `CLIENT_USER_ID` con ese número.
+5. Hacer Manual Deploy.
+6. Entrar con usuario cliente y revisar `/cliente`, `/cliente/mapa`, `/cliente/zonas`, `/cliente/alertas`.
