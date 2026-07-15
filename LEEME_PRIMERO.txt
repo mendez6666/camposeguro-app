@@ -1,12 +1,19 @@
-CampoSeguro v3.8.1 - paquete limpio para GitHub/Render
+CampoSeguro v3.9 - RESUMEN DIARIO Y URGENCIA CRITICA
 
-IMPORTANTE:
-- Sube SOLO estos archivos a la raíz del repositorio.
-- No subas la carpeta __pycache__.
-- No subas una carpeta v38work/v381 dentro del repositorio.
-- En GitHub deben quedar app.py, config.py, db.py, emailer.py, firms_api.py, monitor.py, auto_monitor.py, requirements.txt y runtime.txt directamente en la raíz.
+Subir estos archivos a GitHub reemplazando los anteriores.
+Luego esperar Render: Build successful / Your service is live.
 
-Después de subir:
-Render -> Manual Deploy -> Clear build cache & deploy.
+Importante:
+- No borres DATABASE_URL ni RESEND_API_KEY en Render.
+- En Render deja EMAIL_DAILY_MAX_PER_RECIPIENT=1.
+- Deja EMAIL_URGENT_COOLDOWN_HOURS=24 para no saturar al cliente.
+- Si el cliente cambia radio, CampoSeguro recalcula alertas con ese nuevo radio.
 
-Si vuelve a salir Internal Server Error, abre Render -> Logs, entra a https://app.camposeguro.app/ y copia el traceback rojo.
+Variables clave:
+EMAIL_MODE=daily_plus_critical
+EMAIL_DAILY_MAX_PER_RECIPIENT=1
+EMAIL_URGENT_MIN_LEVEL=CRITICO
+EMAIL_URGENT_COOLDOWN_HOURS=24
+EMAIL_TIMEZONE_OFFSET_HOURS=-4
+EMAIL_MAX_PER_ZONE=3
+EMAIL_SUMMARY_MAX_ALERTS=10

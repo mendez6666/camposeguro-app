@@ -93,7 +93,13 @@ EMAIL_SEND_TIMEOUT_SECONDS = int(os.getenv("EMAIL_SEND_TIMEOUT_SECONDS", "20"))
 EMAIL_PROCESS_LIMIT = int(os.getenv("EMAIL_PROCESS_LIMIT", "3"))
 # v3.6: resumen inteligente, anti-saturación y correo profesional
 EMAIL_SUMMARY_MAX_ALERTS = int(os.getenv("EMAIL_SUMMARY_MAX_ALERTS", "20"))
-EMAIL_DAILY_MAX_PER_RECIPIENT = int(os.getenv("EMAIL_DAILY_MAX_PER_RECIPIENT", "4"))
+EMAIL_DAILY_MAX_PER_RECIPIENT = int(os.getenv("EMAIL_DAILY_MAX_PER_RECIPIENT", "1"))
+# v3.9: modo comercial anti-saturación
+# daily_plus_critical = un resumen diario por destinatario + alerta urgente solo si hay CRITICO y pasó el enfriamiento.
+EMAIL_MODE = os.getenv("EMAIL_MODE", "daily_plus_critical").strip().lower()
+EMAIL_URGENT_MIN_LEVEL = os.getenv("EMAIL_URGENT_MIN_LEVEL", "CRITICO").strip().upper()
+EMAIL_URGENT_COOLDOWN_HOURS = int(os.getenv("EMAIL_URGENT_COOLDOWN_HOURS", "24"))
+EMAIL_TIMEZONE_OFFSET_HOURS = int(os.getenv("EMAIL_TIMEZONE_OFFSET_HOURS", "-4"))
 
 # Monitoreo automático
 AUTO_MONITOR_ENABLED = env_bool("AUTO_MONITOR_ENABLED", "true")

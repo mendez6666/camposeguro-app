@@ -22,7 +22,7 @@ from config import (
     AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS,
     CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME, CLIENT_USER_ID, CLIENT_EMAIL,
     DEFAULT_ZONE_RADIUS_KM, CLIENT_MIN_RADIUS_KM, CLIENT_MAX_RADIUS_KM,
-    EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE, EMAIL_SEND_TIMEOUT_SECONDS, EMAIL_PROCESS_LIMIT, EMAIL_DAILY_MAX_PER_RECIPIENT, EMAIL_SUMMARY_MAX_ALERTS,
+    EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE, EMAIL_SEND_TIMEOUT_SECONDS, EMAIL_PROCESS_LIMIT, EMAIL_DAILY_MAX_PER_RECIPIENT, EMAIL_SUMMARY_MAX_ALERTS, EMAIL_MODE, EMAIL_URGENT_MIN_LEVEL, EMAIL_URGENT_COOLDOWN_HOURS,
     AUTO_MONITOR_ENABLED, AUTO_MONITOR_INTERVAL_MINUTES, AUTO_MONITOR_RUN_ON_STARTUP,
     AUTO_MONITOR_START_DELAY_SECONDS, MONITOR_SECRET
 )
@@ -33,7 +33,7 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once, start_monitor_async
 
 
-app = FastAPI(title="CampoSeguro v3.8.1")
+app = FastAPI(title="CampoSeguro v3.9")
 
 LOGO_CAMPOSEGURO_URL = "https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png"
 
@@ -2337,15 +2337,15 @@ def correos():
           <form method="post" action="/correos/preparar" style="display:inline-block;"><button type="submit">Preparar correos</button></form>
           <form method="post" action="/correos/enviar" style="display:inline-block;"><button type="submit">Procesar pendientes seguros</button></form>
           <form method="post" action="/correos/limpiar-pruebas" style="display:inline-block;"><button type="submit" class="secondary">Limpiar pruebas/errores</button></form>
-          <p class="muted">Procesamiento inteligente: máximo {esc(EMAIL_PROCESS_LIMIT)} resumen(es) por clic. Cada resumen agrupa hasta {esc(EMAIL_SUMMARY_MAX_ALERTS)} alerta(s) y respeta el límite diario de {esc(EMAIL_DAILY_MAX_PER_RECIPIENT)} correo(s) por destinatario.</p>
+          <p class="muted">Procesamiento inteligente: máximo {esc(EMAIL_PROCESS_LIMIT)} resumen(es) por clic. Modo {esc(EMAIL_MODE)}: 1 resumen diario por destinatario y alerta urgente solo desde nivel {esc(EMAIL_URGENT_MIN_LEVEL)} con enfriamiento de {esc(EMAIL_URGENT_COOLDOWN_HOURS)} horas. Cada correo respeta el radio vigente configurado por el cliente.</p>
         </div>
         <div class="notice">
-          Si EMAIL_ENABLED=false, CampoSeguro no envía correos reales: genera archivos TXT en <strong>output/outbox_email</strong>. Si un correo es @ejemplo.com, se bloquea para evitar errores. En v3.6 los correos se agrupan en un solo resumen por destinatario para evitar saturación. Para Resend recomendado: EMAIL_PROVIDER=resend_api y RESEND_API_KEY con la API key.
+          Si EMAIL_ENABLED=false, CampoSeguro no envía correos reales: genera archivos TXT en <strong>output/outbox_email</strong>. Si un correo es @ejemplo.com, se bloquea para evitar errores. En v3.9 los correos se controlan por destinatario: resumen diario y urgencia crítica, evitando saturación. Para Resend recomendado: EMAIL_PROVIDER=resend_api y RESEND_API_KEY con la API key.
         </div>
         <div class="card">
           <h2>Prueba de correo Resend</h2>
           <p><strong>EMAIL_ENABLED:</strong> {esc(EMAIL_ENABLED)}</p>
-          <p><strong>Proveedor:</strong> {esc(EMAIL_PROVIDER)} | <strong>Modo:</strong> resumen inteligente | <strong>API timeout:</strong> {esc(EMAIL_API_TIMEOUT_SECONDS)} segundos</p><p><strong>SMTP respaldo:</strong> {esc(SMTP_HOST or "No configurado")}:{esc(SMTP_PORT)} | SSL: {esc(SMTP_USE_SSL)} | STARTTLS: {esc(SMTP_USE_TLS)}</p>
+          <p><strong>Proveedor:</strong> {esc(EMAIL_PROVIDER)} | <strong>Modo:</strong> {esc(EMAIL_MODE)} | <strong>API timeout:</strong> {esc(EMAIL_API_TIMEOUT_SECONDS)} segundos</p><p><strong>SMTP respaldo:</strong> {esc(SMTP_HOST or "No configurado")}:{esc(SMTP_PORT)} | SSL: {esc(SMTP_USE_SSL)} | STARTTLS: {esc(SMTP_USE_TLS)}</p>
           <p><strong>Usuario SMTP/respaldo:</strong> {esc(SMTP_USER or "No configurado")}</p>
           <p><strong>Remitente:</strong> {esc(SMTP_FROM or "No configurado")}</p>
           <p><strong>Reply-To:</strong> {esc(EMAIL_REPLY_TO or "No configurado")}</p>
@@ -2572,7 +2572,7 @@ def configuracion():
       <p><strong>EMAIL_ENABLED:</strong> {esc(EMAIL_ENABLED)}</p>
       <p><strong>SMTP:</strong> {esc(SMTP_HOST or "No configurado")}:{esc(SMTP_PORT)} | SSL: {esc(SMTP_USE_SSL)} | STARTTLS: {esc(SMTP_USE_TLS)}</p>
       <p><strong>Remitente:</strong> {esc(SMTP_FROM or "No configurado")}</p>
-      <p><strong>Control anti-saturación:</strong> correos desde nivel {esc(EMAIL_MIN_LEVEL)}, máximo {esc(EMAIL_MAX_PER_ZONE)} alerta(s) por zona.</p>
+      <p><strong>Control anti-saturación:</strong> correos desde nivel {esc(EMAIL_MIN_LEVEL)}, máximo {esc(EMAIL_MAX_PER_ZONE)} foco(s) priorizado(s) por zona, resumen diario máximo {esc(EMAIL_DAILY_MAX_PER_RECIPIENT)} y urgencia cada {esc(EMAIL_URGENT_COOLDOWN_HOURS)} horas.</p>
       <p><strong>Radio recomendado:</strong> {esc(DEFAULT_ZONE_RADIUS_KM)} km</p>
       <p><strong>Monitoreo automático:</strong> {esc("Activado" if AUTO_MONITOR_ENABLED else "Desactivado")} cada {esc(AUTO_MONITOR_INTERVAL_MINUTES)} minutos</p>
       <p><strong>Base de datos:</strong> {esc(DB_BACKEND)}</p>

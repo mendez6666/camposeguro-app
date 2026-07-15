@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import html
 import re
 import smtplib
@@ -10,13 +10,104 @@ from config import (
     EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_SSL, SMTP_USE_TLS, SMTP_USER, SMTP_PASSWORD,
     SMTP_FROM, EMAIL_REPLY_TO, EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE,
     EMAIL_SEND_TIMEOUT_SECONDS, EMAIL_PROCESS_LIMIT, EMAIL_PROVIDER, RESEND_API_KEY,
-    EMAIL_API_TIMEOUT_SECONDS, EMAIL_SUMMARY_MAX_ALERTS, EMAIL_DAILY_MAX_PER_RECIPIENT
+    EMAIL_API_TIMEOUT_SECONDS, EMAIL_SUMMARY_MAX_ALERTS, EMAIL_DAILY_MAX_PER_RECIPIENT,
+    EMAIL_MODE, EMAIL_URGENT_MIN_LEVEL, EMAIL_URGENT_COOLDOWN_HOURS, EMAIL_TIMEZONE_OFFSET_HOURS
 )
 from db import get_conn
 
 
 def now_utc():
     return datetime.now(timezone.utc).isoformat()
+
+
+def fecha_local_control():
+    """Fecha operativa para el resumen diario. Bolivia usa UTC-4 por defecto."""
+    return (datetime.now(timezone.utc) + timedelta(hours=EMAIL_TIMEZONE_OFFSET_HOURS)).date().isoformat()
+
+
+def parse_iso_dt(value):
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def horas_desde(value):
+    dt = parse_iso_dt(value)
+    if not dt:
+        return 999999
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - dt).total_seconds() / 3600.0
+
+
+def control_last_sent(conn, destinatario, tipo):
+    row = conn.execute("""
+        SELECT enviado_utc
+        FROM correo_control
+        WHERE LOWER(destinatario)=LOWER(?) AND tipo=?
+        ORDER BY enviado_utc DESC
+        LIMIT 1
+    """, (destinatario, tipo)).fetchone()
+    return row["enviado_utc"] if row else None
+
+
+def control_sent_today(conn, destinatario, tipo="diario"):
+    fecha = fecha_local_control()
+    row = conn.execute("""
+        SELECT COUNT(*) AS n
+        FROM correo_control
+        WHERE LOWER(destinatario)=LOWER(?) AND tipo=? AND fecha_local=?
+    """, (destinatario, tipo, fecha)).fetchone()
+    return int(row["n"] if row else 0) > 0
+
+
+def control_key(destinatario, tipo):
+    if tipo == "diario":
+        return f"{destinatario.lower()}|diario|{fecha_local_control()}"
+    # La urgencia usa fecha diaria para evitar más de una urgencia por día si el cooldown es 24h.
+    return f"{destinatario.lower()}|urgente|{fecha_local_control()}"
+
+
+def registrar_control(conn, destinatario, tipo, rows):
+    fecha = fecha_local_control()
+    detalle = f"{len(rows)} alerta(s); nivel máximo {nivel_maximo(rows)}"
+    conn.execute("""
+        INSERT OR IGNORE INTO correo_control
+        (control_key, destinatario, tipo, fecha_local, enviado_utc, detalle)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (control_key(destinatario, tipo), destinatario, tipo, fecha, now_utc(), detalle))
+    # Si mandamos una urgencia, también cuenta como resumen del día para no saturar al cliente.
+    if tipo == "urgente":
+        conn.execute("""
+            INSERT OR IGNORE INTO correo_control
+            (control_key, destinatario, tipo, fecha_local, enviado_utc, detalle)
+            VALUES (?, ?, 'diario', ?, ?, ?)
+        """, (control_key(destinatario, "diario"), destinatario, fecha, now_utc(), "La urgencia crítica cubrió el resumen diario."))
+
+
+def tipo_envio_para_destinatario(conn, destinatario, rows):
+    """
+    Decide si se prepara correo para el destinatario.
+    - Respeta el radio actual porque recibe las alertas recalculadas con z.radio_km.
+    - Envía máximo un resumen diario.
+    - Envía urgencia solo si hay CRITICO y no se envió urgencia dentro del cooldown.
+    """
+    if not rows:
+        return None, "Sin alertas"
+    nivel = nivel_maximo(rows)
+    modo = (EMAIL_MODE or "daily_plus_critical").lower()
+
+    tiene_urgente = nivel_rank_email(nivel) >= nivel_rank_email(EMAIL_URGENT_MIN_LEVEL)
+    if modo in ("daily_plus_critical", "resumen_diario_urgencia", "smart") and tiene_urgente:
+        last = control_last_sent(conn, destinatario, "urgente")
+        if not last or horas_desde(last) >= EMAIL_URGENT_COOLDOWN_HOURS:
+            return "urgente", f"Urgencia permitida: nivel {nivel}."
+
+    if not control_sent_today(conn, destinatario, "diario"):
+        return "diario", "Resumen diario permitido."
+
+    return None, "Ya existe resumen diario/urgencia para este destinatario en la fecha operativa."
 
 
 def clean_filename(text):
@@ -145,28 +236,39 @@ def alerta_rows_no_encoladas():
 
 def preparar_correos_pendientes():
     """
-    Prepara registros pendientes por alerta. En v3.6 el envío los agrupa en un solo resumen por destinatario.
+    v3.9: prepara correos por destinatario con política comercial anti-saturación.
+    La cola respeta el radio actual de cada zona porque trabaja sobre alertas ya recalculadas.
     """
     rows = alerta_rows_no_encoladas()
     conn = get_conn()
     creados = 0
+    por_destinatario = {}
+
     for r in rows:
         destinatario = (r['usuario_email'] or r['contacto_email'] or '').strip()
         if not email_operativo(destinatario):
             continue
-        asunto = f"CampoSeguro: alerta {r['nivel']} para {r['nombre_zona']}"
-        cuerpo = construir_mensaje(r)
-        cur = conn.execute("""
-            INSERT OR IGNORE INTO correos_alerta
-            (alerta_id, destinatario, asunto, cuerpo, estado, error, creado_utc)
-            VALUES (?, ?, ?, ?, 'pendiente', NULL, ?)
-        """, (r['alerta_id'], destinatario, asunto, cuerpo, now_utc()))
-        if cur.rowcount:
-            creados += 1
+        por_destinatario.setdefault(destinatario, []).append(r)
+
+    for destinatario, alertas_dest in por_destinatario.items():
+        tipo_envio, razon = tipo_envio_para_destinatario(conn, destinatario, alertas_dest)
+        if not tipo_envio:
+            # Evita llenar la cola con correos que ya no corresponde enviar hoy.
+            continue
+        ckey = control_key(destinatario, tipo_envio)
+        for r in alertas_dest:
+            asunto = f"CampoSeguro:{tipo_envio}:{r['nivel']}:{r['nombre_zona']}"
+            cuerpo = construir_mensaje(r)
+            cur = conn.execute("""
+                INSERT OR IGNORE INTO correos_alerta
+                (alerta_id, destinatario, asunto, cuerpo, estado, error, creado_utc, tipo_envio, control_key)
+                VALUES (?, ?, ?, ?, 'pendiente', NULL, ?, ?, ?)
+            """, (r['alerta_id'], destinatario, asunto, cuerpo, now_utc(), tipo_envio, ckey))
+            if cur.rowcount:
+                creados += 1
     conn.commit()
     conn.close()
     return creados
-
 
 def smtp_config_ok():
     if not EMAIL_ENABLED:
@@ -178,7 +280,7 @@ def smtp_config_ok():
 
 def resumen_rows_pendientes(conn, destinatario):
     return conn.execute("""
-        SELECT c.id AS correo_id, c.destinatario, c.asunto, c.cuerpo, c.creado_utc,
+        SELECT c.id AS correo_id, c.destinatario, c.asunto, c.cuerpo, c.creado_utc, c.tipo_envio, c.control_key,
                a.id AS alerta_id, a.nivel, a.distancia_km, a.creada_utc AS alerta_creada_utc,
                z.id AS zona_id, z.nombre_zona, z.municipio, z.departamento, z.radio_km,
                u.nombre AS usuario_nombre, u.email AS usuario_email, u.telefono AS usuario_telefono,
@@ -243,8 +345,9 @@ def construir_resumen_texto(rows, destinatario):
         partes.append("")
         partes.append(f"- {zona['nombre_zona']} ({zona['municipio'] or 'Sin municipio'})")
         partes.append(f"  Nivel máximo: {etiqueta_nivel(nivel_zona)}")
-        partes.append(f"  Alertas: {len(alertas)}")
+        partes.append(f"  Alertas/Focos asociados: {len(alertas)}")
         partes.append(f"  Distancia mínima: {min_zona:.2f} km")
+        partes.append(f"  Radio configurado: {float(zona['radio_km'] or 0):.1f} km")
 
     partes.append("")
     partes.append(f"Detalle de focos priorizados (máximo {EMAIL_SUMMARY_MAX_ALERTS}):")
@@ -295,6 +398,7 @@ def construir_resumen_html(rows, destinatario):
           <td style="padding:10px;border-bottom:1px solid #e5e7eb;">{h(etiqueta_nivel(nivel_zona))}</td>
           <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:center;">{len(alertas)}</td>
           <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:right;">{min_zona:.2f} km</td>
+          <td style="padding:10px;border-bottom:1px solid #e5e7eb;text-align:right;">{float(zona['radio_km'] or 0):.1f} km</td>
         </tr>"""
 
     detalle = ""
@@ -342,7 +446,7 @@ def construir_resumen_html(rows, destinatario):
           </table>
           <h2 style="font-size:20px;margin:20px 0 8px;">Resumen por zona</h2>
           <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border:1px solid #e5e7eb;border-radius:14px;overflow:hidden;">
-            <thead><tr style="background:#f8fafc;color:#475569;"><th align="left" style="padding:10px;">Zona</th><th align="left" style="padding:10px;">Nivel</th><th style="padding:10px;">Alertas</th><th align="right" style="padding:10px;">Distancia mín.</th></tr></thead>
+            <thead><tr style="background:#f8fafc;color:#475569;"><th align="left" style="padding:10px;">Zona</th><th align="left" style="padding:10px;">Nivel</th><th style="padding:10px;">Alertas</th><th align="right" style="padding:10px;">Distancia mín.</th><th align="right" style="padding:10px;">Radio</th></tr></thead>
             <tbody>{zona_cards}</tbody>
           </table>
           <h2 style="font-size:20px;margin:22px 0 8px;">Focos priorizados</h2>
@@ -361,17 +465,24 @@ def construir_resumen_html(rows, destinatario):
     """
 
 
-def construir_correo_resumen(rows, destinatario):
+def construir_correo_resumen(rows, destinatario, tipo_envio="diario"):
     total = len(rows)
     zonas = len(agrupar_por_zona(rows))
     nivel = nivel_maximo(rows)
-    asunto = f"CampoSeguro: resumen {etiqueta_nivel(nivel)} · {total} alerta(s) en {zonas} zona(s)"
+    tipo_envio = (tipo_envio or "diario").lower()
+    if tipo_envio == "urgente":
+        asunto = f"CampoSeguro: alerta {etiqueta_nivel(nivel)} · {zonas} zona(s) con riesgo"
+        correo_id = "urgente_" + clean_filename(destinatario) + "_" + fecha_local_control()
+    else:
+        asunto = f"CampoSeguro: resumen diario {etiqueta_nivel(nivel)} · {zonas} zona(s)"
+        correo_id = "diario_" + clean_filename(destinatario) + "_" + fecha_local_control()
     return {
-        "id": "resumen_" + clean_filename(destinatario),
+        "id": correo_id,
         "destinatario": destinatario,
         "asunto": asunto,
         "cuerpo": construir_resumen_texto(rows, destinatario),
         "html": construir_resumen_html(rows, destinatario),
+        "tipo_envio": tipo_envio,
     }
 
 
@@ -517,15 +628,19 @@ def procesar_correos_pendientes(limit=None):
                 bloqueados += len(rows)
                 continue
 
-            if EMAIL_DAILY_MAX_PER_RECIPIENT > 0 and conteo_enviados_hoy(conn, destinatario) >= EMAIL_DAILY_MAX_PER_RECIPIENT:
-                marcar_rows(conn, rows, 'bloqueado', f'Límite diario de {EMAIL_DAILY_MAX_PER_RECIPIENT} correo(s) alcanzado para este destinatario')
+            tipo_envio = (rows[0].get('tipo_envio') or 'diario').lower()
+            # Segunda protección: si entre preparar y enviar ya se mandó un resumen/urgencia, se bloquea.
+            permitido, razon = tipo_envio_para_destinatario(conn, destinatario, rows)
+            if permitido != tipo_envio:
+                marcar_rows(conn, rows, 'bloqueado', razon or 'Control anti-saturación aplicado')
                 bloqueados += len(rows)
                 continue
 
-            resumen = construir_correo_resumen(rows, destinatario)
+            resumen = construir_correo_resumen(rows, destinatario, tipo_envio)
             if smtp_config_ok():
                 enviar_email_real(resumen)
                 marcar_rows(conn, rows, 'enviado', None)
+                registrar_control(conn, destinatario, tipo_envio, rows)
                 enviados += 1
             else:
                 path = escribir_outbox(resumen)
@@ -545,6 +660,7 @@ def procesar_correos_pendientes(limit=None):
         'bloqueados': bloqueados,
         'smtp_activo': smtp_config_ok(),
         'modo_resumen': True,
+        'modo_envio': EMAIL_MODE,
     }
 
 
@@ -571,6 +687,10 @@ def estadisticas_correos():
     for estado in ['pendiente', 'enviado', 'outbox', 'error', 'bloqueado']:
         stats[estado if estado != 'pendiente' else 'pendientes'] = conn.execute('SELECT COUNT(*) FROM correos_alerta WHERE estado=?', (estado,)).fetchone()[0]
     stats['total'] = conn.execute('SELECT COUNT(*) FROM correos_alerta').fetchone()[0]
+    try:
+        stats['controles_hoy'] = conn.execute('SELECT COUNT(*) FROM correo_control WHERE fecha_local=?', (fecha_local_control(),)).fetchone()[0]
+    except Exception:
+        stats['controles_hoy'] = 0
     stats['enviados'] = stats.pop('enviado')
     stats['errores'] = stats.pop('error')
     stats['bloqueados'] = stats.pop('bloqueado')

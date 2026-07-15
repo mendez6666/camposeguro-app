@@ -222,8 +222,22 @@ def _create_tables_sqlite(conn):
         error TEXT,
         creado_utc TEXT NOT NULL,
         enviado_utc TEXT,
+        tipo_envio TEXT DEFAULT 'diario',
+        control_key TEXT,
         UNIQUE(alerta_id, destinatario),
         FOREIGN KEY(alerta_id) REFERENCES alertas(id)
+    )
+    """)
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS correo_control (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        control_key TEXT UNIQUE,
+        destinatario TEXT NOT NULL,
+        tipo TEXT NOT NULL,
+        fecha_local TEXT,
+        enviado_utc TEXT NOT NULL,
+        detalle TEXT
     )
     """)
 
@@ -301,7 +315,21 @@ def _create_tables_postgres(conn):
         error TEXT,
         creado_utc TEXT NOT NULL,
         enviado_utc TEXT,
+        tipo_envio TEXT DEFAULT 'diario',
+        control_key TEXT,
         UNIQUE(alerta_id, destinatario)
+    )
+    """)
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS correo_control (
+        id SERIAL PRIMARY KEY,
+        control_key TEXT UNIQUE,
+        destinatario TEXT NOT NULL,
+        tipo TEXT NOT NULL,
+        fecha_local TEXT,
+        enviado_utc TEXT NOT NULL,
+        detalle TEXT
     )
     """)
 
@@ -310,6 +338,7 @@ def _create_tables_postgres(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_focos_geo ON focos(latitude, longitude)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_alertas_zona ON alertas(zona_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_correos_estado ON correos_alerta(estado)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_correo_control_dest_tipo ON correo_control(destinatario, tipo, enviado_utc)")
 
 
 def init_db():
@@ -325,6 +354,10 @@ def init_db():
             conn.execute("ALTER TABLE zonas ADD COLUMN usuario_id INTEGER")
         if not _has_column(conn, "zonas", "contacto_email"):
             conn.execute("ALTER TABLE zonas ADD COLUMN contacto_email TEXT")
+        if not _has_column(conn, "correos_alerta", "tipo_envio"):
+            conn.execute("ALTER TABLE correos_alerta ADD COLUMN tipo_envio TEXT DEFAULT 'diario'")
+        if not _has_column(conn, "correos_alerta", "control_key"):
+            conn.execute("ALTER TABLE correos_alerta ADD COLUMN control_key TEXT")
 
         conn.commit()
     finally:
