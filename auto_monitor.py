@@ -1,171 +1,31 @@
-import json
-import threading
+"""Worker independiente para Render.
+
+Uso recomendado en producción:
+  - Web service: uvicorn app:app --host 0.0.0.0 --port $PORT
+  - Background worker: python auto_monitor.py
+
+En el web service puedes dejar AUTO_MONITOR_ENABLED=false para evitar doble ejecución.
+"""
+
 import time
-import traceback
-from datetime import datetime, timezone
 
-from config import (
-    AUTO_MONITOR_ENABLED,
-    AUTO_MONITOR_INTERVAL_MINUTES,
-    AUTO_MONITOR_RUN_ON_STARTUP,
-    AUTO_MONITOR_START_DELAY_SECONDS,
-    MONITOR_STATUS_PATH,
-)
-from monitor import run_monitoring
-from emailer import preparar_correos_pendientes, procesar_correos_pendientes, smtp_config_ok
+import config
+import db
+import monitor
 
 
-_lock = threading.Lock()
-_thread_started = False
-_last_status = {
-    "running": False,
-    "enabled": AUTO_MONITOR_ENABLED,
-    "last_run_utc": None,
-    "last_success": None,
-    "last_error": None,
-    "last_trigger": None,
-    "next_run_hint": None,
-    "runs": 0,
-}
-
-
-def now_utc():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _save_status(status):
-    try:
-        MONITOR_STATUS_PATH.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-
-def _load_status():
-    try:
-        if MONITOR_STATUS_PATH.exists():
-            data = json.loads(MONITOR_STATUS_PATH.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                _last_status.update(data)
-    except Exception:
-        pass
-
-
-def get_auto_monitor_status():
-    _load_status()
-    status = dict(_last_status)
-    status["enabled"] = AUTO_MONITOR_ENABLED
-    status["interval_minutes"] = AUTO_MONITOR_INTERVAL_MINUTES
-    status["run_on_startup"] = AUTO_MONITOR_RUN_ON_STARTUP
-    status["smtp_active"] = smtp_config_ok()
-    return status
-
-
-def run_monitor_once(trigger="manual"):
-    """
-    Ejecuta monitoreo completo:
-    1. FIRMS
-    2. Guarda focos
-    3. Recalcula alertas
-    4. Prepara correos
-    5. Procesa correos: si SMTP está activo envía; si no, genera outbox
-    """
-    if not _lock.acquire(blocking=False):
-        status = get_auto_monitor_status()
-        status["message"] = "El monitoreo ya está en ejecución."
-        return status
-
-    try:
-        _last_status.update({
-            "running": True,
-            "last_trigger": trigger,
-            "last_start_utc": now_utc(),
-            "last_error": None,
-        })
-        _save_status(_last_status)
-
-        result = run_monitoring()
-        correos_preparados = preparar_correos_pendientes()
-        correos_procesados = procesar_correos_pendientes()
-
-        _last_status.update({
-            "running": False,
-            "last_run_utc": now_utc(),
-            "last_success": True,
-            "last_error": None,
-            "last_trigger": trigger,
-            "runs": int(_last_status.get("runs") or 0) + 1,
-            "last_result": result,
-            "correos_preparados": correos_preparados,
-            "correos_procesados": correos_procesados,
-            "next_run_hint": f"aprox. en {AUTO_MONITOR_INTERVAL_MINUTES} minutos si el servicio sigue despierto",
-        })
-        _save_status(_last_status)
-        return dict(_last_status)
-
-    except Exception as exc:
-        _last_status.update({
-            "running": False,
-            "last_run_utc": now_utc(),
-            "last_success": False,
-            "last_error": str(exc),
-            "last_traceback": traceback.format_exc(),
-            "last_trigger": trigger,
-        })
-        _save_status(_last_status)
-        return dict(_last_status)
-
-    finally:
-        _lock.release()
-
-
-def _loop():
-    if AUTO_MONITOR_RUN_ON_STARTUP:
-        time.sleep(max(1, AUTO_MONITOR_START_DELAY_SECONDS))
-        run_monitor_once(trigger="startup")
-
+def main() -> None:
+    db.init_db()
+    db.seed_data()
+    db.set_state("worker_status", "Activo")
     while True:
-        time.sleep(max(15, AUTO_MONITOR_INTERVAL_MINUTES * 60))
-        run_monitor_once(trigger="auto_interval")
+        try:
+            monitor.run_monitor("background-worker")
+        except Exception as exc:
+            db.set_state("worker_status", "Error")
+            db.set_state("last_error", repr(exc))
+        time.sleep(max(60, config.MONITOR_INTERVAL_MINUTES * 60))
 
 
-def start_background_monitor():
-    global _thread_started
-
-    if not AUTO_MONITOR_ENABLED:
-        return False
-
-    if _thread_started:
-        return True
-
-    t = threading.Thread(target=_loop, name="camposeguro-auto-monitor", daemon=True)
-    t.start()
-    _thread_started = True
-    return True
-
-
-def start_monitor_async(trigger="manual_async"):
-    """
-    Inicia el monitoreo en un hilo de fondo y responde rápido al navegador.
-    Evita errores Cloudflare 524 en Render cuando FIRMS tarda muchos segundos.
-    """
-    status = get_auto_monitor_status()
-    if status.get("running"):
-        status["message"] = "El monitoreo ya está en ejecución. Revisa esta pantalla en unos minutos."
-        return status
-
-    def _runner():
-        run_monitor_once(trigger=trigger)
-
-    t = threading.Thread(target=_runner, name=f"camposeguro-monitor-{trigger}", daemon=True)
-    t.start()
-
-    # Marcamos estado inicial para que el usuario vea movimiento inmediatamente.
-    _last_status.update({
-        "running": True,
-        "last_trigger": trigger,
-        "last_start_utc": now_utc(),
-        "last_error": None,
-        "message": "Monitoreo iniciado en segundo plano."
-    })
-    _save_status(_last_status)
-    return dict(_last_status)
+if __name__ == "__main__":
+    main()

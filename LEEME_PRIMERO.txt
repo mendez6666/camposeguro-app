@@ -1,13 +1,44 @@
-CAMPOSEGURO v4.0 - SUBIR A GITHUB
+CAMPOSEGURO v4.1 — ESCALABLE
 
-Sube todos los archivos de esta carpeta a GitHub.
-No subas carpetas __pycache__.
-No necesitas subir camposeguro.db si usas PostgreSQL en Render.
+Esta versión corrige la base para pensar en cientos de clientes:
 
-Después de desplegar:
-1) Abre app.camposeguro.app como administrador.
-2) Entra a Usuarios.
-3) Copia el Enlace cliente de cada usuario.
-4) El cliente entra solo por ese enlace y ve únicamente su información.
+1. Multiusuario real.
+   Ya no se usa CLIENT_USER_ID por cliente. Cada usuario tiene correo, contraseña/token y sus propias zonas.
 
-Esta versión está pensada para piloto comercial con varios clientes sin cambiar CLIENT_USER_ID.
+2. PostgreSQL obligatorio.
+   No subas camposeguro.db a GitHub. La base debe vivir en Render Postgres, Supabase, Neon u otro PostgreSQL.
+
+3. Alertas agrupadas por zona.
+   Si una zona tiene muchos focos dentro del radio, CampoSeguro cuenta una zona con alerta, con foco_count y distancia mínima.
+
+4. Correo anti-saturación.
+   El sistema prepara máximo un resumen diario por destinatario y urgencias críticas con enfriamiento configurable.
+
+5. Monitor automático.
+   En piloto puede correr dentro del web service. En producción conviene usar un background worker separado: python auto_monitor.py
+
+Archivos principales a subir a GitHub:
+- app.py
+- db.py
+- config.py
+- monitor.py
+- emailer.py
+- auto_monitor.py
+- requirements.txt
+- runtime.txt
+- render.yaml
+- .gitignore
+- .env.example
+- README.md
+
+Variables mínimas en Render:
+- DATABASE_URL
+- SESSION_SECRET
+- ADMIN_EMAIL
+- ADMIN_PASSWORD
+- FIRMS_MAP_KEY
+- RESEND_API_KEY
+- EMAIL_ENABLED=true
+- EMAIL_PROVIDER=resend_api
+- EMAIL_FROM=CampoSeguro <alertas@camposeguro.app>
+- PUBLIC_BASE_URL=https://app.camposeguro.app

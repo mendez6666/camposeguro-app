@@ -1,434 +1,291 @@
-import os
-import sqlite3
-from datetime import datetime, timezone
+from __future__ import annotations
+
+import hashlib
 import secrets
-from typing import Any, Iterable, Optional
+from contextlib import contextmanager
+from typing import Any, Iterable
 
-from config import DB_PATH, DATABASE_URL, DB_BACKEND, DEFAULT_ZONE_RADIUS_KM
+import psycopg2
+import psycopg2.extras
 
-
-def now_utc():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def is_postgres():
-    return DB_BACKEND == "postgresql"
+import config
 
 
-class DBRow(dict):
-    """Fila compatible con acceso por nombre y por índice."""
-    def __init__(self, data=None, order=None):
-        super().__init__(data or {})
-        self._order = list(order or self.keys())
-
-    def __getitem__(self, key):
-        if isinstance(key, int):
-            if key < 0:
-                key = len(self._order) + key
-            return dict.__getitem__(self, self._order[key])
-        return dict.__getitem__(self, key)
+class DatabaseNotConfigured(RuntimeError):
+    pass
 
 
-class Result:
-    def __init__(self, cursor, provider: str):
-        self.cursor = cursor
-        self.provider = provider
-        self.rowcount = getattr(cursor, "rowcount", -1)
-
-    def _wrap(self, row):
-        if row is None:
-            return None
-        if isinstance(row, DBRow):
-            return row
-        if self.provider == "postgresql":
-            # RealDictCursor devuelve dict preservando orden de columnas.
-            return DBRow(dict(row), list(row.keys()))
-        # sqlite3.Row
-        keys = row.keys()
-        return DBRow({k: row[k] for k in keys}, list(keys))
-
-    def fetchone(self):
-        return self._wrap(self.cursor.fetchone())
-
-    def fetchall(self):
-        return [self._wrap(r) for r in self.cursor.fetchall()]
+def password_hash(password: str) -> str:
+    salt = config.SESSION_SECRET
+    return hashlib.sha256((salt + "::" + (password or "")).encode("utf-8")).hexdigest()
 
 
-class DBConnection:
-    def __init__(self, raw, provider: str):
-        self.raw = raw
-        self.provider = provider
-
-    def cursor(self):
-        return self
-
-    def _convert_sql(self, sql: str) -> str:
-        if self.provider != "postgresql":
-            return sql
-
-        s = sql
-        stripped = s.lstrip()
-        prefix_ws = s[:len(s) - len(stripped)]
-        upper = stripped.upper()
-
-        # SQLite compatibility
-        if upper.startswith("INSERT OR IGNORE INTO"):
-            stripped = stripped.replace("INSERT OR IGNORE INTO", "INSERT INTO", 1)
-            s = prefix_ws + stripped
-            # ON CONFLICT DO NOTHING funciona si existe UNIQUE/PK conflict.
-            if "ON CONFLICT" not in s.upper():
-                s = s.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
-
-        # Placeholders
-        s = s.replace("?", "%s")
-
-        return s
-
-    def execute(self, sql: str, params: Optional[Iterable[Any]] = None):
-        if params is None:
-            params = ()
-        if self.provider == "postgresql":
-            cur = self.raw.cursor()
-            cur.execute(self._convert_sql(sql), tuple(params))
-            return Result(cur, self.provider)
-        cur = self.raw.execute(sql, tuple(params))
-        return Result(cur, self.provider)
-
-    def executemany(self, sql: str, seq_of_params: Iterable[Iterable[Any]]):
-        if self.provider == "postgresql":
-            cur = self.raw.cursor()
-            cur.executemany(self._convert_sql(sql), [tuple(p) for p in seq_of_params])
-            return Result(cur, self.provider)
-        cur = self.raw.executemany(sql, [tuple(p) for p in seq_of_params])
-        return Result(cur, self.provider)
-
-    def commit(self):
-        self.raw.commit()
-
-    def rollback(self):
-        self.raw.rollback()
-
-    def close(self):
-        self.raw.close()
+def check_password(password: str, stored_hash: str | None) -> bool:
+    if not stored_hash:
+        return False
+    return secrets.compare_digest(password_hash(password), stored_hash)
 
 
+@contextmanager
 def get_conn():
-    if is_postgres():
-        try:
-            import psycopg2
-            from psycopg2.extras import RealDictCursor
-        except Exception as exc:
-            raise RuntimeError(
-                "Falta psycopg2-binary. Verifica requirements.txt y vuelve a desplegar en Render."
-            ) from exc
-
-        url = DATABASE_URL
-        # Compatibilidad con urls tipo postgres://
-        if url.startswith("postgres://"):
-            url = "postgresql://" + url[len("postgres://"):]
-        raw = psycopg2.connect(url, cursor_factory=RealDictCursor, connect_timeout=10)
-        return DBConnection(raw, "postgresql")
-
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return DBConnection(conn, "sqlite")
-
-
-def _has_column(conn, table, column):
-    if is_postgres():
-        row = conn.execute("""
-            SELECT COUNT(*) AS n
-            FROM information_schema.columns
-            WHERE table_schema='public' AND table_name=%s AND column_name=%s
-        """, (table, column)).fetchone()
-        return bool(row and row["n"])
-
-    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    return column in [r[1] for r in rows]
-
-
-def _create_tables_sqlite(conn):
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS usuarios (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre TEXT NOT NULL,
-        email TEXT,
-        telefono TEXT,
-        organizacion TEXT,
-        tipo_usuario TEXT,
-        portal_token TEXT UNIQUE,
-        activo INTEGER DEFAULT 1,
-        creado_utc TEXT NOT NULL
-    )
-    """)
-
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS zonas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        usuario_id INTEGER,
-        nombre_zona TEXT NOT NULL,
-        contacto_email TEXT,
-        tipo_zona TEXT,
-        departamento TEXT,
-        municipio TEXT,
-        latitud REAL NOT NULL,
-        longitud REAL NOT NULL,
-        radio_km REAL NOT NULL,
-        activa INTEGER DEFAULT 1,
-        creada_utc TEXT NOT NULL,
-        FOREIGN KEY(usuario_id) REFERENCES usuarios(id)
-    )
-    """)
-
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS focos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        external_key TEXT UNIQUE,
-        fuente TEXT,
-        latitude REAL NOT NULL,
-        longitude REAL NOT NULL,
-        acq_date TEXT,
-        acq_time TEXT,
-        satellite TEXT,
-        instrument TEXT,
-        confidence TEXT,
-        frp TEXT,
-        bright_ti4 TEXT,
-        daynight TEXT,
-        creado_utc TEXT NOT NULL
-    )
-    """)
-
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS alertas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        alerta_key TEXT UNIQUE,
-        zona_id INTEGER NOT NULL,
-        foco_id INTEGER NOT NULL,
-        distancia_km REAL NOT NULL,
-        nivel TEXT NOT NULL,
-        creada_utc TEXT NOT NULL,
-        FOREIGN KEY(zona_id) REFERENCES zonas(id),
-        FOREIGN KEY(foco_id) REFERENCES focos(id)
-    )
-    """)
-
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS correos_alerta (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        alerta_id INTEGER NOT NULL,
-        destinatario TEXT NOT NULL,
-        asunto TEXT NOT NULL,
-        cuerpo TEXT NOT NULL,
-        estado TEXT DEFAULT 'pendiente',
-        error TEXT,
-        creado_utc TEXT NOT NULL,
-        enviado_utc TEXT,
-        tipo_envio TEXT DEFAULT 'diario',
-        control_key TEXT,
-        UNIQUE(alerta_id, destinatario),
-        FOREIGN KEY(alerta_id) REFERENCES alertas(id)
-    )
-    """)
-
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS correo_control (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        control_key TEXT UNIQUE,
-        destinatario TEXT NOT NULL,
-        tipo TEXT NOT NULL,
-        fecha_local TEXT,
-        enviado_utc TEXT NOT NULL,
-        detalle TEXT
-    )
-    """)
-
-
-def _create_tables_postgres(conn):
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS usuarios (
-        id SERIAL PRIMARY KEY,
-        nombre TEXT NOT NULL,
-        email TEXT,
-        telefono TEXT,
-        organizacion TEXT,
-        tipo_usuario TEXT,
-        portal_token TEXT UNIQUE,
-        activo INTEGER DEFAULT 1,
-        creado_utc TEXT NOT NULL
-    )
-    """)
-
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS zonas (
-        id SERIAL PRIMARY KEY,
-        usuario_id INTEGER REFERENCES usuarios(id),
-        nombre_zona TEXT NOT NULL,
-        contacto_email TEXT,
-        tipo_zona TEXT,
-        departamento TEXT,
-        municipio TEXT,
-        latitud DOUBLE PRECISION NOT NULL,
-        longitud DOUBLE PRECISION NOT NULL,
-        radio_km DOUBLE PRECISION NOT NULL,
-        activa INTEGER DEFAULT 1,
-        creada_utc TEXT NOT NULL
-    )
-    """)
-
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS focos (
-        id SERIAL PRIMARY KEY,
-        external_key TEXT UNIQUE,
-        fuente TEXT,
-        latitude DOUBLE PRECISION NOT NULL,
-        longitude DOUBLE PRECISION NOT NULL,
-        acq_date TEXT,
-        acq_time TEXT,
-        satellite TEXT,
-        instrument TEXT,
-        confidence TEXT,
-        frp TEXT,
-        bright_ti4 TEXT,
-        daynight TEXT,
-        creado_utc TEXT NOT NULL
-    )
-    """)
-
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS alertas (
-        id SERIAL PRIMARY KEY,
-        alerta_key TEXT UNIQUE,
-        zona_id INTEGER NOT NULL REFERENCES zonas(id),
-        foco_id INTEGER NOT NULL REFERENCES focos(id),
-        distancia_km DOUBLE PRECISION NOT NULL,
-        nivel TEXT NOT NULL,
-        creada_utc TEXT NOT NULL
-    )
-    """)
-
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS correos_alerta (
-        id SERIAL PRIMARY KEY,
-        alerta_id INTEGER NOT NULL REFERENCES alertas(id),
-        destinatario TEXT NOT NULL,
-        asunto TEXT NOT NULL,
-        cuerpo TEXT NOT NULL,
-        estado TEXT DEFAULT 'pendiente',
-        error TEXT,
-        creado_utc TEXT NOT NULL,
-        enviado_utc TEXT,
-        tipo_envio TEXT DEFAULT 'diario',
-        control_key TEXT,
-        UNIQUE(alerta_id, destinatario)
-    )
-    """)
-
-    conn.execute("""
-    CREATE TABLE IF NOT EXISTS correo_control (
-        id SERIAL PRIMARY KEY,
-        control_key TEXT UNIQUE,
-        destinatario TEXT NOT NULL,
-        tipo TEXT NOT NULL,
-        fecha_local TEXT,
-        enviado_utc TEXT NOT NULL,
-        detalle TEXT
-    )
-    """)
-
-    # Índices útiles para monitoreo.
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_focos_fecha ON focos(acq_date, acq_time)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_focos_geo ON focos(latitude, longitude)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_alertas_zona ON alertas(zona_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_correos_estado ON correos_alerta(estado)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_correo_control_dest_tipo ON correo_control(destinatario, tipo, enviado_utc)")
-    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_portal_token ON usuarios(portal_token)")
-
-
-def _ensure_user_tokens(conn):
-    """Genera enlaces privados para usuarios existentes sin token."""
-    rows = conn.execute("SELECT id FROM usuarios WHERE portal_token IS NULL OR portal_token='' ").fetchall()
-    for r in rows:
-        token = secrets.token_urlsafe(24)
-        conn.execute("UPDATE usuarios SET portal_token=? WHERE id=?", (token, r["id"]))
-
-
-def init_db():
-    conn = get_conn()
+    if not config.DATABASE_URL:
+        raise DatabaseNotConfigured("DATABASE_URL no está configurada. Usa PostgreSQL para CampoSeguro v4.1.")
+    conn = psycopg2.connect(config.DATABASE_URL, sslmode="require")
     try:
-        if is_postgres():
-            _create_tables_postgres(conn)
-        else:
-            _create_tables_sqlite(conn)
-
-        # Migraciones simples para bases antiguas
-        if not _has_column(conn, "zonas", "usuario_id"):
-            conn.execute("ALTER TABLE zonas ADD COLUMN usuario_id INTEGER")
-        if not _has_column(conn, "zonas", "contacto_email"):
-            conn.execute("ALTER TABLE zonas ADD COLUMN contacto_email TEXT")
-        if not _has_column(conn, "correos_alerta", "tipo_envio"):
-            conn.execute("ALTER TABLE correos_alerta ADD COLUMN tipo_envio TEXT DEFAULT 'diario'")
-        if not _has_column(conn, "correos_alerta", "control_key"):
-            conn.execute("ALTER TABLE correos_alerta ADD COLUMN control_key TEXT")
-        if not _has_column(conn, "usuarios", "portal_token"):
-            conn.execute("ALTER TABLE usuarios ADD COLUMN portal_token TEXT")
-
-        _ensure_user_tokens(conn)
-        try:
-            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_portal_token ON usuarios(portal_token)")
-        except Exception:
-            pass
-
+        yield conn
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
 
-def seed_demo_data():
-    conn = get_conn()
-    try:
-        user_count = conn.execute("SELECT COUNT(*) AS n FROM usuarios").fetchone()[0]
-        if user_count == 0:
-            conn.executemany("""
-                INSERT INTO usuarios
-                (nombre, email, telefono, organizacion, tipo_usuario, portal_token, activo, creado_utc)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, [
-                ("Usuario piloto", "correo@ejemplo.com", "+591", "CampoSeguro", "Piloto", secrets.token_urlsafe(24), 1, now_utc()),
-                ("Responsable municipal", "municipio@ejemplo.com", "+591", "Municipio", "Institucional", secrets.token_urlsafe(24), 1, now_utc()),
-            ])
-            conn.commit()
-
-        usuario_piloto = conn.execute("SELECT id FROM usuarios ORDER BY id LIMIT 1").fetchone()[0]
-
-        zone_count = conn.execute("SELECT COUNT(*) AS n FROM zonas").fetchone()[0]
-        if zone_count == 0:
-            rows = [
-                (usuario_piloto, "Santa Cruz de la Sierra", "correo@ejemplo.com", "Ciudad", "Santa Cruz", "Santa Cruz de la Sierra", -17.7833, -63.1821, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
-                (usuario_piloto, "San Ignacio de Velasco", "correo@ejemplo.com", "Municipio", "Santa Cruz", "San Ignacio de Velasco", -16.3700, -60.9600, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
-                (usuario_piloto, "Roboré", "correo@ejemplo.com", "Municipio", "Santa Cruz", "Roboré", -18.3333, -59.7667, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
-                (usuario_piloto, "San Matías", "correo@ejemplo.com", "Municipio", "Santa Cruz", "San Matías", -16.3667, -58.4000, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
-                (usuario_piloto, "Charagua Iyambae", "correo@ejemplo.com", "Municipio", "Santa Cruz", "Charagua Iyambae", -19.8000, -63.2200, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
-                (usuario_piloto, "Puerto Suárez", "correo@ejemplo.com", "Municipio", "Santa Cruz", "Puerto Suárez", -18.9500, -57.8000, DEFAULT_ZONE_RADIUS_KM, 1, now_utc()),
-            ]
-            conn.executemany("""
-                INSERT INTO zonas
-                (usuario_id, nombre_zona, contacto_email, tipo_zona, departamento, municipio, latitud, longitud, radio_km, activa, creada_utc)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, rows)
-
-        conn.commit()
-    finally:
-        conn.close()
+def execute(sql: str, params: tuple | list | None = None, fetch: str | None = None) -> Any:
+    with get_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params or ())
+            if fetch == "one":
+                return cur.fetchone()
+            if fetch == "all":
+                return cur.fetchall()
+            if fetch == "value":
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return next(iter(row.values()))
+            return cur.rowcount
 
 
-def rows_to_dicts(rows):
-    return [dict(r) for r in rows]
+def executemany(sql: str, rows: Iterable[tuple]) -> int:
+    count = 0
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for row in rows:
+                cur.execute(sql, row)
+                count += cur.rowcount
+    return count
 
 
-def db_status():
-    return {
-        "backend": DB_BACKEND,
-        "persistent": is_postgres(),
-        "database_url_configured": bool(DATABASE_URL),
-    }
+def init_db() -> None:
+    statements = [
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            organization TEXT DEFAULT '',
+            email TEXT UNIQUE NOT NULL,
+            phone TEXT DEFAULT '',
+            role TEXT NOT NULL DEFAULT 'client',
+            password_hash TEXT DEFAULT '',
+            client_token TEXT UNIQUE NOT NULL,
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS zones (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            municipio TEXT DEFAULT '',
+            lat DOUBLE PRECISION NOT NULL,
+            lon DOUBLE PRECISION NOT NULL,
+            radius_km DOUBLE PRECISION NOT NULL DEFAULT 15,
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS focos (
+            id SERIAL PRIMARY KEY,
+            external_id TEXT UNIQUE NOT NULL,
+            source TEXT NOT NULL,
+            lat DOUBLE PRECISION NOT NULL,
+            lon DOUBLE PRECISION NOT NULL,
+            acq_date TEXT DEFAULT '',
+            acq_time TEXT DEFAULT '',
+            satellite TEXT DEFAULT '',
+            confidence TEXT DEFAULT '',
+            frp TEXT DEFAULT '',
+            daynight TEXT DEFAULT '',
+            raw JSONB DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS zone_alerts (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            zone_id INTEGER NOT NULL REFERENCES zones(id) ON DELETE CASCADE,
+            level TEXT NOT NULL,
+            foco_count INTEGER NOT NULL DEFAULT 0,
+            nearest_foco_id INTEGER REFERENCES focos(id) ON DELETE SET NULL,
+            min_distance_km DOUBLE PRECISION,
+            latest_detection TEXT DEFAULT '',
+            message TEXT DEFAULT '',
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            calculated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE(zone_id)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS email_outbox (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            recipient TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'summary',
+            subject TEXT NOT NULL,
+            body TEXT NOT NULL,
+            dedupe_key TEXT UNIQUE,
+            status TEXT NOT NULL DEFAULT 'queued',
+            provider TEXT DEFAULT '',
+            provider_response TEXT DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            processed_at TIMESTAMPTZ
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS monitor_state (
+            key TEXT PRIMARY KEY,
+            value TEXT DEFAULT '',
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        """,
+
+        # Migraciones suaves para repositorios que ya tenían tablas anteriores.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS organization TEXT DEFAULT '';",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT '';",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'client';",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT DEFAULT '';",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS client_token TEXT;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;",
+        "UPDATE users SET client_token = substr(md5(random()::text || clock_timestamp()::text),1,24) WHERE client_token IS NULL OR client_token='';",
+        "ALTER TABLE users ALTER COLUMN client_token SET NOT NULL;",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_client_token_unique ON users(client_token);",
+        "ALTER TABLE zones ADD COLUMN IF NOT EXISTS user_id INTEGER;",
+        "ALTER TABLE zones ADD COLUMN IF NOT EXISTS municipio TEXT DEFAULT '';",
+        "ALTER TABLE zones ADD COLUMN IF NOT EXISTS radius_km DOUBLE PRECISION NOT NULL DEFAULT 15;",
+        "ALTER TABLE zones ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;",
+        "ALTER TABLE focos ADD COLUMN IF NOT EXISTS external_id TEXT;",
+        "ALTER TABLE focos ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'FIRMS';",
+        "ALTER TABLE focos ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;",
+        "ALTER TABLE focos ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION;",
+        "ALTER TABLE focos ADD COLUMN IF NOT EXISTS acq_date TEXT DEFAULT '';",
+        "ALTER TABLE focos ADD COLUMN IF NOT EXISTS acq_time TEXT DEFAULT '';",
+        "ALTER TABLE focos ADD COLUMN IF NOT EXISTS satellite TEXT DEFAULT '';",
+        "ALTER TABLE focos ADD COLUMN IF NOT EXISTS confidence TEXT DEFAULT '';",
+        "ALTER TABLE focos ADD COLUMN IF NOT EXISTS frp TEXT DEFAULT '';",
+        "ALTER TABLE focos ADD COLUMN IF NOT EXISTS daynight TEXT DEFAULT '';",
+        "ALTER TABLE zone_alerts ADD COLUMN IF NOT EXISTS user_id INTEGER;",
+        "ALTER TABLE zone_alerts ADD COLUMN IF NOT EXISTS zone_id INTEGER;",
+        "ALTER TABLE zone_alerts ADD COLUMN IF NOT EXISTS level TEXT DEFAULT 'INFORMATIVO';",
+        "ALTER TABLE zone_alerts ADD COLUMN IF NOT EXISTS foco_count INTEGER NOT NULL DEFAULT 0;",
+        "ALTER TABLE zone_alerts ADD COLUMN IF NOT EXISTS nearest_foco_id INTEGER;",
+        "ALTER TABLE zone_alerts ADD COLUMN IF NOT EXISTS min_distance_km DOUBLE PRECISION;",
+        "ALTER TABLE zone_alerts ADD COLUMN IF NOT EXISTS latest_detection TEXT DEFAULT '';",
+        "ALTER TABLE zone_alerts ADD COLUMN IF NOT EXISTS message TEXT DEFAULT '';",
+        "ALTER TABLE zone_alerts ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;",
+        "DELETE FROM zone_alerts a USING zone_alerts b WHERE a.zone_id=b.zone_id AND a.id<b.id;",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_zone_alerts_zone_unique ON zone_alerts(zone_id);",
+        "CREATE INDEX IF NOT EXISTS idx_zones_user ON zones(user_id);",
+        "CREATE INDEX IF NOT EXISTS idx_focos_lat_lon ON focos(lat, lon);",
+        "CREATE INDEX IF NOT EXISTS idx_focos_source ON focos(source);",
+        "CREATE INDEX IF NOT EXISTS idx_alerts_user ON zone_alerts(user_id);",
+        "CREATE INDEX IF NOT EXISTS idx_email_status ON email_outbox(status);",
+        "CREATE INDEX IF NOT EXISTS idx_email_user_kind ON email_outbox(user_id, kind);",
+    ]
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            for stmt in statements:
+                cur.execute(stmt)
+
+
+def set_state(key: str, value: Any) -> None:
+    execute(
+        """
+        INSERT INTO monitor_state(key, value, updated_at)
+        VALUES (%s, %s, now())
+        ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+        """,
+        (key, str(value)),
+    )
+
+
+def get_state(key: str, default: str = "") -> str:
+    row = execute("SELECT value FROM monitor_state WHERE key=%s", (key,), fetch="one")
+    return str(row["value"]) if row else default
+
+
+def all_state() -> dict[str, str]:
+    rows = execute("SELECT key, value FROM monitor_state ORDER BY key", fetch="all") or []
+    return {r["key"]: r["value"] for r in rows}
+
+
+def seed_data() -> None:
+    admin = execute("SELECT id FROM users WHERE email=%s", (config.ADMIN_EMAIL,), fetch="one")
+    if not admin:
+        execute(
+            """
+            INSERT INTO users(name, organization, email, phone, role, password_hash, client_token)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                "Administrador CampoSeguro",
+                "CampoSeguro",
+                config.ADMIN_EMAIL,
+                "",
+                "admin",
+                password_hash(config.ADMIN_PASSWORD),
+                secrets.token_urlsafe(24),
+            ),
+        )
+    else:
+        execute(
+            "UPDATE users SET role='admin', password_hash=%s WHERE email=%s",
+            (password_hash(config.ADMIN_PASSWORD), config.ADMIN_EMAIL),
+        )
+
+    client = execute("SELECT id FROM users WHERE email=%s", (config.CLIENT_DEMO_EMAIL,), fetch="one")
+    if not client:
+        client = execute(
+            """
+            INSERT INTO users(name, organization, email, phone, role, password_hash, client_token)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            RETURNING id
+            """,
+            (
+                "Usuario piloto",
+                "CampoSeguro",
+                config.CLIENT_DEMO_EMAIL,
+                config.CLIENT_DEMO_PHONE,
+                "client",
+                password_hash(config.CLIENT_DEMO_PASSWORD),
+                secrets.token_urlsafe(24),
+            ),
+            fetch="one",
+        )
+    client_id = client["id"]
+    existing_zones = execute("SELECT COUNT(*) AS n FROM zones WHERE user_id=%s", (client_id,), fetch="one")
+    if int(existing_zones["n"]) == 0:
+        seed_zones = [
+            (client_id, "Santa Cruz de la Sierra", "Santa Cruz de la Sierra", -17.7833, -63.1821, config.DEFAULT_ZONE_RADIUS_KM),
+            (client_id, "San Ignacio de Velasco", "San Ignacio de Velasco", -16.3667, -60.9500, config.DEFAULT_ZONE_RADIUS_KM),
+            (client_id, "Roboré", "Roboré", -18.3333, -59.7500, config.DEFAULT_ZONE_RADIUS_KM),
+            (client_id, "San Matías", "San Matías", -16.3667, -58.4000, config.DEFAULT_ZONE_RADIUS_KM),
+            (client_id, "Puerto Suárez", "Puerto Suárez", -18.9500, -57.8000, config.DEFAULT_ZONE_RADIUS_KM),
+            (client_id, "Charagua Iyambae", "Charagua Iyambae", -19.8000, -63.2000, config.DEFAULT_ZONE_RADIUS_KM),
+        ]
+        executemany(
+            "INSERT INTO zones(user_id, name, municipio, lat, lon, radius_km) VALUES (%s,%s,%s,%s,%s,%s)",
+            seed_zones,
+        )
+
+    for key, val in {
+        "running": "false",
+        "status": "Inicializado",
+        "last_error": "",
+        "app_version": config.APP_VERSION,
+    }.items():
+        if not get_state(key):
+            set_state(key, val)

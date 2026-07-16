@@ -1,6 +1,8 @@
-fastapi
-uvicorn
-python-multipart
-requests
-python-dotenv
-psycopg2-binary
+fastapi==0.139.0
+uvicorn==0.51.0
+starlette==0.51.0
+python-multipart==0.0.32
+python-dotenv==1.2.2
+requests==2.34.2
+psycopg2-binary==2.9.12
+pydantic==2.13.4

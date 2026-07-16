@@ -1,56 +1,96 @@
-# CampoSeguro v4.0 — Portal seguro para múltiples clientes
+# CampoSeguro v4.1 — Plataforma escalable
 
-Versión para piloto comercial seguro.
+Versión preparada para pasar de prototipo a operación con múltiples clientes.
 
-## Qué cambia
+## Concepto operativo
 
-- Cada usuario registrado tiene un **enlace privado de cliente**.
-- Ya no hace falta cambiar `CLIENT_USER_ID` en Render para probar diferentes clientes.
-- El cliente entra por su enlace y solo ve sus zonas, sus alertas, su mapa y su reporte.
-- El cliente **no puede ejecutar monitoreo**, no puede ver usuarios, base de datos, configuración ni correos.
-- El administrador mantiene el monitoreo automático y el envío de correos controlados.
-- Se mantiene la lógica anti-saturación de v3.9: resumen diario y urgencias críticas controladas.
+- **Focos FIRMS**: puntos satelitales descargados para el área operativa.
+- **Zona monitoreada**: punto o área de interés de un cliente con radio configurable.
+- **Zona con alerta**: zona que tiene uno o más focos dentro de su radio.
+- **Correo diario**: máximo un resumen diario por destinatario.
+- **Urgencia**: solo para nivel crítico, con enfriamiento configurable para no saturar al cliente.
 
-## Uso recomendado
+## Arquitectura recomendada
 
-1. Sube todos los archivos de esta carpeta a GitHub.
-2. Espera que Render despliegue correctamente.
-3. Entra como administrador.
-4. Ve a **Usuarios**.
-5. Copia el **Enlace cliente** de cada usuario.
-6. Comparte ese enlace solo con el cliente correspondiente.
+```text
+NASA FIRMS
+   ↓
+Monitor automático / worker
+   ↓
+PostgreSQL
+   ↓
+Alertas agrupadas por zona y cliente
+   ↓
+Portal web + correos Resend
+```
 
-## Variables recomendadas en Render
+## Variables principales en Render
 
 ```env
-AUTH_ENABLED=true
-ADMIN_USER=admin
-ADMIN_PASSWORD=TU_PASSWORD_ADMIN
-SESSION_SECRET=UN_TEXTO_LARGO_SECRETO
-AUTH_COOKIE_SECURE=true
+DATABASE_URL=postgresql://...
+SESSION_SECRET=un-secreto-largo
+PUBLIC_BASE_URL=https://app.camposeguro.app
 
-CLIENT_PORTAL_ENABLED=true
-APP_PUBLIC_URL=https://app.camposeguro.app
+ADMIN_EMAIL=tu_correo@dominio.com
+ADMIN_PASSWORD=Cambiar123!
 
-AUTO_MONITOR_ENABLED=true
-AUTO_MONITOR_INTERVAL_MINUTES=180
-AUTO_MONITOR_RUN_ON_STARTUP=true
+FIRMS_MAP_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+FIRMS_AREA_BBOX=-70.0,-23.5,-57.0,-9.0
+FIRMS_DAY_RANGE=5
+FIRMS_SOURCES=MODIS_NRT,VIIRS_SNPP_NRT,VIIRS_NOAA20_NRT,VIIRS_NOAA21_NRT
 
 EMAIL_ENABLED=true
 EMAIL_PROVIDER=resend_api
-RESEND_API_KEY=TU_API_KEY_DE_RESEND
-SMTP_FROM=CampoSeguro <alertas@camposeguro.app>
+RESEND_API_KEY=re_xxxxxxxxxxxxx
+EMAIL_FROM=CampoSeguro <alertas@camposeguro.app>
 EMAIL_REPLY_TO=tu_correo@dominio.com
-EMAIL_MODE=daily_plus_critical
+
+MONITOR_INTERVAL_MINUTES=180
+AUTO_MONITOR_ENABLED=true
 EMAIL_DAILY_MAX_PER_RECIPIENT=1
-EMAIL_URGENT_MIN_LEVEL=CRITICO
-EMAIL_URGENT_COOLDOWN_HOURS=24
-EMAIL_TIMEZONE_OFFSET_HOURS=-4
-EMAIL_MIN_LEVEL=ATENCION
-EMAIL_MAX_PER_ZONE=3
-EMAIL_SUMMARY_MAX_ALERTS=10
+EMAIL_URGENT_ENABLED=true
+EMAIL_URGENT_COOLDOWN_HOURS=12
 ```
 
-## Importante
+## Render
 
-No compartas la clave de administrador. Para clientes usa únicamente los enlaces privados generados en la sección **Usuarios**.
+Web service:
+
+```bash
+uvicorn app:app --host 0.0.0.0 --port $PORT
+```
+
+Worker recomendado cuando ya haya clientes pagos:
+
+```bash
+python auto_monitor.py
+```
+
+Cuando uses worker separado, deja en el web service:
+
+```env
+AUTO_MONITOR_ENABLED=false
+```
+
+y en el worker:
+
+```env
+AUTO_MONITOR_ENABLED=true
+```
+
+## Acceso
+
+Al iniciar, el sistema crea:
+
+- Un administrador con `ADMIN_EMAIL` y `ADMIN_PASSWORD`.
+- Un cliente piloto con `CLIENT_DEMO_EMAIL` y `CLIENT_DEMO_PASSWORD`.
+
+Cada cliente solo ve sus zonas, alertas y reporte.
+
+## Notas importantes
+
+- No subir `camposeguro.db` a GitHub.
+- No crear una variable `CLIENT_USER_ID` por cliente.
+- El radio se guarda por zona y recalcula alertas.
+- Las alertas son agrupadas: una zona puede tener muchos focos, pero genera una sola alerta operativa.
+- Los correos son anti-saturación: resumen diario y urgencias con enfriamiento.
