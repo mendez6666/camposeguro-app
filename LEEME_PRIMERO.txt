@@ -1,19 +1,13 @@
-CampoSeguro v3.9 - RESUMEN DIARIO Y URGENCIA CRITICA
+CAMPOSEGURO v4.0 - SUBIR A GITHUB
 
-Subir estos archivos a GitHub reemplazando los anteriores.
-Luego esperar Render: Build successful / Your service is live.
+Sube todos los archivos de esta carpeta a GitHub.
+No subas carpetas __pycache__.
+No necesitas subir camposeguro.db si usas PostgreSQL en Render.
 
-Importante:
-- No borres DATABASE_URL ni RESEND_API_KEY en Render.
-- En Render deja EMAIL_DAILY_MAX_PER_RECIPIENT=1.
-- Deja EMAIL_URGENT_COOLDOWN_HOURS=24 para no saturar al cliente.
-- Si el cliente cambia radio, CampoSeguro recalcula alertas con ese nuevo radio.
+Después de desplegar:
+1) Abre app.camposeguro.app como administrador.
+2) Entra a Usuarios.
+3) Copia el Enlace cliente de cada usuario.
+4) El cliente entra solo por ese enlace y ve únicamente su información.
 
-Variables clave:
-EMAIL_MODE=daily_plus_critical
-EMAIL_DAILY_MAX_PER_RECIPIENT=1
-EMAIL_URGENT_MIN_LEVEL=CRITICO
-EMAIL_URGENT_COOLDOWN_HOURS=24
-EMAIL_TIMEZONE_OFFSET_HOURS=-4
-EMAIL_MAX_PER_ZONE=3
-EMAIL_SUMMARY_MAX_ALERTS=10
+Esta versión está pensada para piloto comercial con varios clientes sin cambiar CLIENT_USER_ID.

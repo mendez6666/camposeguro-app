@@ -1,26 +1,46 @@
-# CampoSeguro v3.9 — Resumen diario y urgencias controladas
+# CampoSeguro v4.0 — Portal seguro para múltiples clientes
 
-Versión comercial anti-saturación.
+Versión para piloto comercial seguro.
 
 ## Qué cambia
 
-- El monitoreo puede correr cada 3 horas, pero el cliente no recibe muchos correos.
-- CampoSeguro envía máximo 1 resumen diario por destinatario.
-- Si aparece una alerta CRÍTICA, puede enviar una urgencia, pero con enfriamiento configurable.
-- La lógica respeta el radio actual de cada zona: si el cliente cambia de 15 km a 5 km, las alertas y correos se recalculan con ese nuevo radio.
-- El correo muestra el radio configurado por zona, distancia mínima y foco priorizado.
-- Corrige error visual de CSS `.compact-list` que podía causar error interno.
+- Cada usuario registrado tiene un **enlace privado de cliente**.
+- Ya no hace falta cambiar `CLIENT_USER_ID` en Render para probar diferentes clientes.
+- El cliente entra por su enlace y solo ve sus zonas, sus alertas, su mapa y su reporte.
+- El cliente **no puede ejecutar monitoreo**, no puede ver usuarios, base de datos, configuración ni correos.
+- El administrador mantiene el monitoreo automático y el envío de correos controlados.
+- Se mantiene la lógica anti-saturación de v3.9: resumen diario y urgencias críticas controladas.
+
+## Uso recomendado
+
+1. Sube todos los archivos de esta carpeta a GitHub.
+2. Espera que Render despliegue correctamente.
+3. Entra como administrador.
+4. Ve a **Usuarios**.
+5. Copia el **Enlace cliente** de cada usuario.
+6. Comparte ese enlace solo con el cliente correspondiente.
 
 ## Variables recomendadas en Render
 
 ```env
+AUTH_ENABLED=true
+ADMIN_USER=admin
+ADMIN_PASSWORD=TU_PASSWORD_ADMIN
+SESSION_SECRET=UN_TEXTO_LARGO_SECRETO
+AUTH_COOKIE_SECURE=true
+
+CLIENT_PORTAL_ENABLED=true
+APP_PUBLIC_URL=https://app.camposeguro.app
+
+AUTO_MONITOR_ENABLED=true
+AUTO_MONITOR_INTERVAL_MINUTES=180
+AUTO_MONITOR_RUN_ON_STARTUP=true
+
 EMAIL_ENABLED=true
 EMAIL_PROVIDER=resend_api
 RESEND_API_KEY=TU_API_KEY_DE_RESEND
 SMTP_FROM=CampoSeguro <alertas@camposeguro.app>
-EMAIL_REPLY_TO=mmendez@sbda.org.bo
-APP_PUBLIC_URL=https://app.camposeguro.app
-
+EMAIL_REPLY_TO=tu_correo@dominio.com
 EMAIL_MODE=daily_plus_critical
 EMAIL_DAILY_MAX_PER_RECIPIENT=1
 EMAIL_URGENT_MIN_LEVEL=CRITICO
@@ -31,10 +51,6 @@ EMAIL_MAX_PER_ZONE=3
 EMAIL_SUMMARY_MAX_ALERTS=10
 ```
 
-## Uso operativo
+## Importante
 
-1. El admin mantiene el monitoreo cada 180 minutos.
-2. El cliente ajusta radios en Mis zonas.
-3. CampoSeguro recalcula alertas con el radio vigente.
-4. El correo diario resume zonas con alerta.
-5. La urgencia solo sale para CRÍTICO y no se repite durante el cooldown.
+No compartas la clave de administrador. Para clientes usa únicamente los enlaces privados generados en la sección **Usuarios**.

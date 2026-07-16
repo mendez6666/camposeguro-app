@@ -1,4 +1,4 @@
-# CAMPOSEGURO_V381_LIMPIO_SOLO_RAIZ
+# CAMPOSEGURO_V40_PORTAL_CLIENTES_SEGURO
 from datetime import datetime, timezone
 import html
 import json
@@ -8,6 +8,8 @@ import time
 import hmac
 import hashlib
 import csv
+import secrets
+from contextvars import ContextVar
 from io import StringIO
 from urllib.parse import quote
 
@@ -20,7 +22,7 @@ from config import (
     EMAIL_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USE_SSL, SMTP_USE_TLS, SMTP_USER, SMTP_FROM, EMAIL_REPLY_TO, EMAIL_PROVIDER, RESEND_API_KEY, EMAIL_API_TIMEOUT_SECONDS,
     AUTH_ENABLED, ADMIN_USER, ADMIN_PASSWORD, SESSION_SECRET,
     AUTH_COOKIE_NAME, AUTH_COOKIE_SECURE, AUTH_SESSION_HOURS, ALERT_EVALUATION_HOURS,
-    CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME, CLIENT_USER_ID, CLIENT_EMAIL,
+    CLIENT_USER, CLIENT_PASSWORD, CLIENT_NAME, CLIENT_USER_ID, CLIENT_EMAIL, CLIENT_PORTAL_ENABLED, APP_PUBLIC_URL,
     DEFAULT_ZONE_RADIUS_KM, CLIENT_MIN_RADIUS_KM, CLIENT_MAX_RADIUS_KM,
     EMAIL_MIN_LEVEL, EMAIL_MAX_PER_ZONE, EMAIL_SEND_TIMEOUT_SECONDS, EMAIL_PROCESS_LIMIT, EMAIL_DAILY_MAX_PER_RECIPIENT, EMAIL_SUMMARY_MAX_ALERTS, EMAIL_MODE, EMAIL_URGENT_MIN_LEVEL, EMAIL_URGENT_COOLDOWN_HOURS,
     AUTO_MONITOR_ENABLED, AUTO_MONITOR_INTERVAL_MINUTES, AUTO_MONITOR_RUN_ON_STARTUP,
@@ -33,7 +35,7 @@ from firms_api import test_source, masked_key, AREA_PRESETS, API_REGION_LABEL
 from auto_monitor import start_background_monitor, get_auto_monitor_status, run_monitor_once, start_monitor_async
 
 
-app = FastAPI(title="CampoSeguro v3.9")
+app = FastAPI(title="CampoSeguro v4.0")
 
 LOGO_CAMPOSEGURO_URL = "https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png"
 
@@ -41,6 +43,9 @@ LOGO_CAMPOSEGURO_URL = "https://i.ibb.co/VWnQ8RZY/logo-campo-seguro.png"
 PUBLIC_PATHS = {"/login", "/logout", "/landing", "/healthz", "/favicon.ico", "/cron/monitor"}
 CLIENT_ALLOWED_PREFIXES = ("/cliente",)
 CLIENT_ALLOWED_EXACT = {"/logout", "/healthz"}
+CLIENT_PORTAL_PREFIXES = ("/cliente/acceso/",)
+CURRENT_CLIENT_USER_ID = ContextVar("CURRENT_CLIENT_USER_ID", default=0)
+CURRENT_CLIENT_NAME = ContextVar("CURRENT_CLIENT_NAME", default="")
 
 
 def auth_configured():
@@ -71,15 +76,37 @@ def verify_session_token(token: str):
         if role == "admin" and username != ADMIN_USER:
             return None
 
-        if role == "cliente" and username != CLIENT_USER:
-            return None
+        session_user_id = 0
+        session_client_name = ""
+        if role == "cliente":
+            # Compatibilidad anterior: usuario cliente único por variable de entorno.
+            if username == CLIENT_USER:
+                pass
+            # Nuevo v4.0: sesión cliente vinculada a un usuario interno.
+            elif username.startswith("uid:"):
+                try:
+                    session_user_id = int(username.split(":", 1)[1])
+                    conn = get_conn()
+                    row = conn.execute("SELECT id, nombre FROM usuarios WHERE id=? AND activo=1", (session_user_id,)).fetchone()
+                    conn.close()
+                    if not row:
+                        return None
+                    session_client_name = row["nombre"]
+                except Exception:
+                    return None
+            else:
+                return None
 
         msg = f"{role}|{username}|{exp}"
         expected = hmac.new(SESSION_SECRET.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return None
 
-        return {"username": username, "role": role}
+        data = {"username": username, "role": role}
+        if role == "cliente" and session_user_id:
+            data["user_id"] = session_user_id
+            data["client_name"] = session_client_name
+        return data
     except Exception:
         return None
 
@@ -685,6 +712,9 @@ def client_filter_clause(z_alias="z", u_alias="u"):
     - CLIENT_EMAIL: alternativa por correo.
     - Sin configurar: modo piloto general, muestra todo.
     """
+    session_user_id = int(CURRENT_CLIENT_USER_ID.get() or 0)
+    if session_user_id > 0:
+        return f"{z_alias}.usuario_id=?", [session_user_id], f"Usuario ID {session_user_id}"
     if int(CLIENT_USER_ID or 0) > 0:
         return f"{z_alias}.usuario_id=?", [int(CLIENT_USER_ID)], f"Usuario ID {int(CLIENT_USER_ID)}"
     email = (CLIENT_EMAIL or "").strip().lower()
@@ -698,6 +728,13 @@ def client_filter_clause(z_alias="z", u_alias="u"):
 
 
 def client_scope_notice():
+    session_user_id = int(CURRENT_CLIENT_USER_ID.get() or 0)
+    session_name = CURRENT_CLIENT_NAME.get()
+    if session_user_id > 0:
+        etiqueta = f"usuario ID {session_user_id}"
+        if session_name:
+            etiqueta += f" · {session_name}"
+        return f"Vista privada filtrada por {esc(etiqueta)}."
     if int(CLIENT_USER_ID or 0) > 0:
         return f"Vista filtrada por usuario ID {int(CLIENT_USER_ID)}."
     if CLIENT_EMAIL:
@@ -843,6 +880,33 @@ def cliente_metricas():
     conn.close()
     return zonas, focos_asociados, alertas, criticas, etiqueta
 
+
+@app.get("/cliente/acceso/{portal_token}")
+def cliente_acceso(portal_token: str):
+    """Acceso individual por enlace privado para cada cliente/usuario.
+    Esto evita usar una sola variable CLIENT_USER_ID para todos los clientes.
+    """
+    try:
+        if not CLIENT_PORTAL_ENABLED:
+            return HTMLResponse("Portal de cliente desactivado.", status_code=403)
+        token = (portal_token or "").strip()
+        conn = get_conn()
+        u = conn.execute("SELECT id, nombre FROM usuarios WHERE portal_token=? AND activo=1", (token,)).fetchone()
+        conn.close()
+        if not u:
+            return HTMLResponse(layout("Acceso no válido", "<div class='card'><h2>Enlace no válido</h2><p>El enlace de cliente no existe o fue desactivado.</p><p><a class='button' href='/login'>Volver</a></p></div>"), status_code=404)
+        response = RedirectResponse("/cliente", status_code=303)
+        response.set_cookie(
+            AUTH_COOKIE_NAME,
+            make_session_token(f"uid:{int(u['id'])}", "cliente"),
+            max_age=AUTH_SESSION_HOURS * 3600,
+            httponly=True,
+            secure=AUTH_COOKIE_SECURE,
+            samesite="lax",
+        )
+        return response
+    except Exception as exc:
+        return error_page(exc)
 
 @app.get("/cliente", response_class=HTMLResponse)
 def cliente_inicio():
@@ -1820,7 +1884,8 @@ def usuarios():
               <p><strong>Teléfono:</strong> {esc(u['telefono'] or '')}</p>
               <p><strong>Zonas asociadas:</strong> {esc(u['total_zonas'])}</p>
               <p><strong>Estado:</strong> {esc(estado)}</p>
-              <p><a class="button light" href="/usuarios/{u['id']}/editar">Editar usuario</a></p>
+              <p><strong>Enlace cliente:</strong><br><code>{esc(APP_PUBLIC_URL)}/cliente/acceso/{esc(u.get('portal_token') or '')}</code></p>
+              <p><a class="button light" href="/usuarios/{u['id']}/editar">Editar usuario</a> <a class="button light" href="/cliente/acceso/{esc(u.get('portal_token') or '')}" target="_blank">Abrir vista cliente</a></p>
             </div>
             """
         if not cards:
@@ -1829,7 +1894,7 @@ def usuarios():
         body = f"""
         <div class="card">
           <h2>Usuarios y responsables</h2>
-          <p>Registra personas, responsables de predios, comunidades o instituciones.</p><div class='notice'>Para un piloto real: crea o edita el usuario, copia su <strong>ID usuario</strong> y ponlo en Render como <strong>CLIENT_USER_ID</strong>. Así el cliente verá solo sus zonas y alertas.</div>
+          <p>Registra personas, responsables de predios, comunidades o instituciones.</p><div class='notice'>Modo comercial seguro: cada usuario tiene un <strong>enlace privado de cliente</strong>. No hace falta cambiar CLIENT_USER_ID para cada cliente. Comparte solo ese enlace con el responsable.</div>
           <p><a class="button" href="/usuarios/nuevo">Nuevo usuario</a></p>
         </div>
         <div class="user-grid">{cards}</div>
@@ -1863,9 +1928,9 @@ def usuario_nuevo_form():
 def usuario_nuevo(nombre: str = Form(...), telefono: str = Form(""), email: str = Form(""), organizacion: str = Form(""), tipo_usuario: str = Form("Propietario")):
     conn = get_conn()
     conn.execute("""
-        INSERT INTO usuarios (nombre, email, telefono, organizacion, tipo_usuario, activo, creado_utc)
-        VALUES (?, ?, ?, ?, ?, 1, ?)
-    """, (nombre, email, telefono, organizacion, tipo_usuario, datetime.now(timezone.utc).isoformat()))
+        INSERT INTO usuarios (nombre, email, telefono, organizacion, tipo_usuario, portal_token, activo, creado_utc)
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+    """, (nombre, email, telefono, organizacion, tipo_usuario, secrets.token_urlsafe(24), datetime.now(timezone.utc).isoformat()))
     conn.commit()
     conn.close()
     return RedirectResponse("/usuarios", status_code=303)

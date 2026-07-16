@@ -79,6 +79,7 @@ AUTH_SESSION_HOURS = int(os.getenv("AUTH_SESSION_HOURS", "12"))
 CLIENT_USER = os.getenv("CLIENT_USER", "cliente").strip()
 CLIENT_PASSWORD = os.getenv("CLIENT_PASSWORD", "").strip()
 CLIENT_NAME = os.getenv("CLIENT_NAME", "Cliente CampoSeguro").strip()
+CLIENT_PORTAL_ENABLED = env_bool("CLIENT_PORTAL_ENABLED", "true")
 
 # Radios de alerta por zona
 DEFAULT_ZONE_RADIUS_KM = float(os.getenv("DEFAULT_ZONE_RADIUS_KM", "15"))

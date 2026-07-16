@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from datetime import datetime, timezone
+import secrets
 from typing import Any, Iterable, Optional
 
 from config import DB_PATH, DATABASE_URL, DB_BACKEND, DEFAULT_ZONE_RADIUS_KM
@@ -155,6 +156,7 @@ def _create_tables_sqlite(conn):
         telefono TEXT,
         organizacion TEXT,
         tipo_usuario TEXT,
+        portal_token TEXT UNIQUE,
         activo INTEGER DEFAULT 1,
         creado_utc TEXT NOT NULL
     )
@@ -251,6 +253,7 @@ def _create_tables_postgres(conn):
         telefono TEXT,
         organizacion TEXT,
         tipo_usuario TEXT,
+        portal_token TEXT UNIQUE,
         activo INTEGER DEFAULT 1,
         creado_utc TEXT NOT NULL
     )
@@ -339,6 +342,15 @@ def _create_tables_postgres(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_alertas_zona ON alertas(zona_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_correos_estado ON correos_alerta(estado)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_correo_control_dest_tipo ON correo_control(destinatario, tipo, enviado_utc)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_portal_token ON usuarios(portal_token)")
+
+
+def _ensure_user_tokens(conn):
+    """Genera enlaces privados para usuarios existentes sin token."""
+    rows = conn.execute("SELECT id FROM usuarios WHERE portal_token IS NULL OR portal_token='' ").fetchall()
+    for r in rows:
+        token = secrets.token_urlsafe(24)
+        conn.execute("UPDATE usuarios SET portal_token=? WHERE id=?", (token, r["id"]))
 
 
 def init_db():
@@ -358,6 +370,14 @@ def init_db():
             conn.execute("ALTER TABLE correos_alerta ADD COLUMN tipo_envio TEXT DEFAULT 'diario'")
         if not _has_column(conn, "correos_alerta", "control_key"):
             conn.execute("ALTER TABLE correos_alerta ADD COLUMN control_key TEXT")
+        if not _has_column(conn, "usuarios", "portal_token"):
+            conn.execute("ALTER TABLE usuarios ADD COLUMN portal_token TEXT")
+
+        _ensure_user_tokens(conn)
+        try:
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_portal_token ON usuarios(portal_token)")
+        except Exception:
+            pass
 
         conn.commit()
     finally:
@@ -371,11 +391,11 @@ def seed_demo_data():
         if user_count == 0:
             conn.executemany("""
                 INSERT INTO usuarios
-                (nombre, email, telefono, organizacion, tipo_usuario, activo, creado_utc)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (nombre, email, telefono, organizacion, tipo_usuario, portal_token, activo, creado_utc)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, [
-                ("Usuario piloto", "correo@ejemplo.com", "+591", "CampoSeguro", "Piloto", 1, now_utc()),
-                ("Responsable municipal", "municipio@ejemplo.com", "+591", "Municipio", "Institucional", 1, now_utc()),
+                ("Usuario piloto", "correo@ejemplo.com", "+591", "CampoSeguro", "Piloto", secrets.token_urlsafe(24), 1, now_utc()),
+                ("Responsable municipal", "municipio@ejemplo.com", "+591", "Municipio", "Institucional", secrets.token_urlsafe(24), 1, now_utc()),
             ])
             conn.commit()
 
