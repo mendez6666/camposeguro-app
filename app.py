@@ -389,7 +389,7 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
             continue
         z["lat"] = lat
         z["lon"] = lon
-        z["radius_km"] = _to_float(z.get("radius_km"), DEFAULT_ZONE_RADIUS_KM) or DEFAULT_ZONE_RADIUS_KM
+        z["radius_km"] = _to_float(z.get("radius_km"), config.DEFAULT_ZONE_RADIUS_KM) or config.DEFAULT_ZONE_RADIUS_KM
         if z.get("foco_count") is None:
             z["foco_count"] = 0
         zones.append(z)
