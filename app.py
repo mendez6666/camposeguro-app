@@ -66,14 +66,14 @@ pre { background:#111827; color:#f9fafb; padding:18px; border-radius:12px; overf
 .login-wrap { max-width:460px; margin:60px auto; }
 .map-page { padding:0; }
 #map { height:calc(100vh - 122px); min-height:620px; width:100%; }
-.map-panel { position:absolute; z-index:900; top:18px; left:18px; background:white; border-radius:14px; padding:14px 16px; box-shadow:0 8px 26px rgba(0,0,0,.18); min-width:185px; font-size:13px; }
-.map-help { position:absolute; z-index:900; top:18px; right:18px; background:white; border-radius:14px; padding:14px 16px; box-shadow:0 8px 26px rgba(0,0,0,.18); max-width:280px; font-size:13px; }
+.map-panel { position:absolute; z-index:900; top:92px; left:18px; background:white; border-radius:14px; padding:14px 16px; box-shadow:0 8px 26px rgba(0,0,0,.18); min-width:185px; font-size:13px; }
+.map-help { position:absolute; z-index:900; top:92px; right:18px; background:white; border-radius:14px; padding:14px 16px; box-shadow:0 8px 26px rgba(0,0,0,.18); max-width:280px; font-size:13px; }
 .map-tabs { display:flex; gap:8px; margin:8px 0 10px; }
 .map-tabs button { border:0; border-radius:10px; background:#e6f4ec; color:#0f5132; font-weight:800; padding:8px 12px; cursor:pointer; }
 .legend-item { display:flex; align-items:center; gap:6px; margin:4px 0; }
 .dot { width:11px; height:11px; border-radius:50%; display:inline-block; }
 .dot.red { background:#e03131; } .dot.orange { background:#ff7a1a; } .dot.blue { background:#2563eb; }
-@media (max-width:900px) { .grid { grid-template-columns:repeat(2,1fr); } .form-grid { grid-template-columns:1fr; } .nav { gap:12px; padding:10px 18px; } .page { padding:18px; } .header { padding:14px 18px; } }
+@media (max-width:900px) { .grid { grid-template-columns:repeat(2,1fr); } .form-grid { grid-template-columns:1fr; } .nav { gap:12px; padding:10px 18px; } .page { padding:18px; } .header { padding:14px 18px; } .map-panel { top:110px; left:10px; max-width:170px; } .map-help { top:110px; right:10px; max-width:230px; } }
 @media print { .nav, .btn, .header { display:none !important; } body { background:white; } .card, .stat { box-shadow:none; border:1px solid #ddd; } }
 """
 
