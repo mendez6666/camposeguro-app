@@ -342,9 +342,22 @@ def cliente_inicio(request: Request):
     return layout("Cliente", body, user)
 
 
+def _to_float(value: Any, default: float | None = None) -> float | None:
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _valid_latlon(lat: float | None, lon: float | None) -> bool:
+    return lat is not None and lon is not None and -90 <= lat <= 90 and -180 <= lon <= 180
+
+
 def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     if user_id:
-        zones = db.execute(
+        zones_raw = db.execute(
             """
             SELECT z.*, a.level, a.foco_count, a.min_distance_km
             FROM zones z LEFT JOIN zone_alerts a ON a.zone_id=z.id
@@ -353,7 +366,7 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
             """,
             (user_id,), fetch="all") or []
     else:
-        zones = db.execute(
+        zones_raw = db.execute(
             """
             SELECT z.*, u.name AS user_name, a.level, a.foco_count, a.min_distance_km
             FROM zones z JOIN users u ON u.id=z.user_id
@@ -362,12 +375,48 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
             ORDER BY u.name, z.name
             """,
             fetch="all") or []
-    focos = db.execute("SELECT id, source, lat, lon, acq_date, acq_time FROM focos ORDER BY id DESC LIMIT 15000", fetch="all") or []
+
+    zones: list[dict[str, Any]] = []
+    for zrow in zones_raw:
+        z = dict(zrow)
+        lat = _to_float(z.get("lat"))
+        lon = _to_float(z.get("lon"))
+        if not _valid_latlon(lat, lon):
+            continue
+        z["lat"] = lat
+        z["lon"] = lon
+        z["radius_km"] = _to_float(z.get("radius_km"), DEFAULT_ZONE_RADIUS_KM) or DEFAULT_ZONE_RADIUS_KM
+        if z.get("foco_count") is None:
+            z["foco_count"] = 0
+        zones.append(z)
+
+    # Renderizar miles de puntos como SVG puede hacer que parezca que no cargan.
+    # Por eso se limpian coordenadas, se limitan los puntos más recientes y Leaflet usa canvas.
+    focos_raw = db.execute(
+        """
+        SELECT id, source, lat, lon, acq_date, acq_time
+        FROM focos
+        WHERE lat IS NOT NULL AND lon IS NOT NULL
+        ORDER BY id DESC
+        LIMIT 12000
+        """,
+        fetch="all") or []
+    focos: list[dict[str, Any]] = []
+    for frow in focos_raw:
+        f = dict(frow)
+        lat = _to_float(f.get("lat"))
+        lon = _to_float(f.get("lon"))
+        if not _valid_latlon(lat, lon):
+            continue
+        f["lat"] = round(lat, 5)
+        f["lon"] = round(lon, 5)
+        focos.append(f)
+
     if user_id:
         alerts = db.execute("SELECT * FROM zone_alerts WHERE user_id=%s AND active=TRUE", (user_id,), fetch="all") or []
     else:
         alerts = db.execute("SELECT * FROM zone_alerts WHERE active=TRUE", fetch="all") or []
-    return [dict(z) for z in zones], [dict(f) for f in focos], [dict(a) for a in alerts]
+    return zones, focos, [dict(a) for a in alerts]
 
 
 def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLResponse:
@@ -393,12 +442,13 @@ def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLRespo
     <script>
     const zones = __ZONES__;
     const focos = __FOCOS__;
-    const map = L.map('map', { zoomControl:false }).setView([-17.8,-63.1], 6);
+    const map = L.map('map', { zoomControl:false, preferCanvas:true }).setView([-17.8,-63.1], 6);
     L.control.zoom({position:'bottomright'}).addTo(map);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(map);
     const zoneLayer = L.layerGroup().addTo(map);
     const focoLayer = L.layerGroup().addTo(map);
     const bounds = [];
+    const focoBounds = [];
     function levelColor(level){ if(level==='CRITICO') return '#b42318'; if(level==='ATENCION') return '#f59e0b'; return '#2563eb'; }
     zones.forEach(z => {
       const color = levelColor(z.level || 'INFORMATIVO');
@@ -409,16 +459,20 @@ def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLRespo
       bounds.push([z.lat,z.lon]);
     });
     focos.forEach(f => {
+      const lat = Number(f.lat);
+      const lon = Number(f.lon);
+      if(!Number.isFinite(lat) || !Number.isFinite(lon)) return;
       const isModis = (f.source||'').includes('MODIS');
       const color = isModis ? '#ff7a1a' : '#e03131';
-      const m = L.circleMarker([f.lat,f.lon], {radius:4, color:color, fillColor:color, fillOpacity:0.82, weight:1});
-      m.bindPopup(`<b>Foco FIRMS</b><br>Fuente: ${f.source}<br>Fecha: ${f.acq_date||''} ${f.acq_time||''}<br>${f.lat}, ${f.lon}`);
+      const m = L.circleMarker([lat,lon], {radius:3, color:color, fillColor:color, fillOpacity:0.7, weight:1});
+      m.bindPopup(`<b>Foco FIRMS</b><br>Fuente: ${f.source||''}<br>Fecha: ${f.acq_date||''} ${f.acq_time||''}<br>${lat.toFixed(5)}, ${lon.toFixed(5)}`);
       m.addTo(focoLayer);
+      focoBounds.push([lat,lon]);
     });
     if(bounds.length){ map.fitBounds(bounds, {padding:[60,60]}); }
-    function showZones(){ if(!map.hasLayer(zoneLayer)) map.addLayer(zoneLayer); if(map.hasLayer(focoLayer)) map.removeLayer(focoLayer); }
-    function showFocos(){ if(map.hasLayer(zoneLayer)) map.removeLayer(zoneLayer); if(!map.hasLayer(focoLayer)) map.addLayer(focoLayer); }
-    function showAll(){ if(!map.hasLayer(zoneLayer)) map.addLayer(zoneLayer); if(!map.hasLayer(focoLayer)) map.addLayer(focoLayer); }
+    function showZones(){ if(!map.hasLayer(zoneLayer)) map.addLayer(zoneLayer); if(map.hasLayer(focoLayer)) map.removeLayer(focoLayer); if(bounds.length){ map.fitBounds(bounds, {padding:[60,60]}); } }
+    function showFocos(){ if(map.hasLayer(zoneLayer)) map.removeLayer(zoneLayer); if(!map.hasLayer(focoLayer)) map.addLayer(focoLayer); if(focoBounds.length){ map.fitBounds(focoBounds, {padding:[40,40]}); } }
+    function showAll(){ if(!map.hasLayer(zoneLayer)) map.addLayer(zoneLayer); if(!map.hasLayer(focoLayer)) map.addLayer(focoLayer); const allBounds = bounds.concat(focoBounds); if(allBounds.length){ map.fitBounds(allBounds, {padding:[40,40]}); } }
     </script>
     """.replace("__ZONES__", json.dumps(zones, default=str)).replace("__FOCOS__", json.dumps(focos, default=str))
     return layout("Mapa", panel + js, user, "map-page")
