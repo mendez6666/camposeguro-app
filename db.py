@@ -200,6 +200,85 @@ def init_db() -> None:
             for stmt in statements:
                 cur.execute(stmt)
 
+            # Migración de coordenadas desde versiones anteriores.
+            # Las versiones v3.x/v4.0 usaban latitude/longitude en focos
+            # y latitud/longitud en zonas. v4.1 usa lat/lon.
+            def _has_column(table_name: str, column_name: str) -> bool:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                      SELECT 1 FROM information_schema.columns
+                      WHERE table_name=%s AND column_name=%s
+                    )
+                    """,
+                    (table_name, column_name),
+                )
+                return bool(cur.fetchone()[0])
+
+            if _has_column("focos", "latitude"):
+                cur.execute(
+                    """
+                    UPDATE focos
+                    SET lat = NULLIF(latitude::text,'')::double precision
+                    WHERE lat IS NULL
+                      AND latitude IS NOT NULL
+                      AND latitude::text ~ '^-?[0-9]+(\.[0-9]+)?$'
+                    """
+                )
+            if _has_column("focos", "longitude"):
+                cur.execute(
+                    """
+                    UPDATE focos
+                    SET lon = NULLIF(longitude::text,'')::double precision
+                    WHERE lon IS NULL
+                      AND longitude IS NOT NULL
+                      AND longitude::text ~ '^-?[0-9]+(\.[0-9]+)?$'
+                    """
+                )
+            if _has_column("focos", "latitud"):
+                cur.execute(
+                    """
+                    UPDATE focos
+                    SET lat = NULLIF(latitud::text,'')::double precision
+                    WHERE lat IS NULL
+                      AND latitud IS NOT NULL
+                      AND latitud::text ~ '^-?[0-9]+(\.[0-9]+)?$'
+                    """
+                )
+            if _has_column("focos", "longitud"):
+                cur.execute(
+                    """
+                    UPDATE focos
+                    SET lon = NULLIF(longitud::text,'')::double precision
+                    WHERE lon IS NULL
+                      AND longitud IS NOT NULL
+                      AND longitud::text ~ '^-?[0-9]+(\.[0-9]+)?$'
+                    """
+                )
+            if _has_column("focos", "fuente"):
+                cur.execute("UPDATE focos SET source = COALESCE(NULLIF(source,''), fuente::text, 'FIRMS') WHERE source IS NULL OR source='' ")
+
+            if _has_column("zones", "latitud"):
+                cur.execute(
+                    """
+                    UPDATE zones
+                    SET lat = NULLIF(latitud::text,'')::double precision
+                    WHERE lat IS NULL
+                      AND latitud IS NOT NULL
+                      AND latitud::text ~ '^-?[0-9]+(\.[0-9]+)?$'
+                    """
+                )
+            if _has_column("zones", "longitud"):
+                cur.execute(
+                    """
+                    UPDATE zones
+                    SET lon = NULLIF(longitud::text,'')::double precision
+                    WHERE lon IS NULL
+                      AND longitud IS NOT NULL
+                      AND longitud::text ~ '^-?[0-9]+(\.[0-9]+)?$'
+                    """
+                )
+
 
 def set_state(key: str, value: Any) -> None:
     execute(

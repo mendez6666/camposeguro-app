@@ -383,8 +383,8 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
     zones: list[dict[str, Any]] = []
     for zrow in zones_raw:
         z = dict(zrow)
-        lat = _to_float(z.get("lat") or z.get("latitude"))
-        lon = _to_float(z.get("lon") or z.get("longitude"))
+        lat = _to_float(z.get("lat") or z.get("latitude") or z.get("latitud"))
+        lon = _to_float(z.get("lon") or z.get("longitude") or z.get("longitud"))
         if not _valid_latlon(lat, lon):
             continue
         z["lat"] = lat
@@ -396,11 +396,13 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
 
     focos_raw = []
     try:
+        # Importante: versiones anteriores guardaban coordenadas como
+        # latitude/longitude o latitud/longitud. No filtramos por lat/lon
+        # porque esas columnas pueden existir pero estar vacías después de migrar.
         focos_raw = db.execute(
             """
-            SELECT id, source, lat, lon, acq_date, acq_time, satellite
+            SELECT *
             FROM focos
-            WHERE lat IS NOT NULL AND lon IS NOT NULL
             ORDER BY id DESC
             LIMIT 6000
             """,
@@ -418,18 +420,26 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
     focos: list[dict[str, Any]] = []
     for frow in focos_raw:
         f0 = dict(frow)
-        lat = _to_float(f0.get("lat") or f0.get("latitude"))
-        lon = _to_float(f0.get("lon") or f0.get("longitude"))
+        raw = f0.get("raw")
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                raw = {}
+        if not isinstance(raw, dict):
+            raw = {}
+        lat = _to_float(f0.get("lat") or f0.get("latitude") or f0.get("latitud") or raw.get("latitude") or raw.get("latitud"))
+        lon = _to_float(f0.get("lon") or f0.get("longitude") or f0.get("longitud") or raw.get("longitude") or raw.get("longitud"))
         if not _valid_latlon(lat, lon):
             continue
-        source = f0.get("source") or f0.get("satellite") or "FIRMS"
+        source = f0.get("source") or f0.get("fuente") or f0.get("satellite") or raw.get("fuente") or raw.get("satellite") or "FIRMS"
         focos.append({
             "id": f0.get("id"),
             "source": str(source),
             "lat": round(lat, 5),
             "lon": round(lon, 5),
-            "acq_date": str(f0.get("acq_date") or f0.get("date") or ""),
-            "acq_time": str(f0.get("acq_time") or f0.get("time") or ""),
+            "acq_date": str(f0.get("acq_date") or f0.get("date") or raw.get("acq_date") or raw.get("fecha") or ""),
+            "acq_time": str(f0.get("acq_time") or f0.get("time") or raw.get("acq_time") or raw.get("hora") or ""),
         })
 
     try:
