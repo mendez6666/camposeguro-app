@@ -1,0 +1,66 @@
+services:
+  - type: web
+    name: camposeguro-app
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: FIRMS_DAY_RANGE
+        value: "1"
+      - key: FIRMS_QUERY_DAYS
+        value: "5"
+      - key: ALERT_WINDOW_HOURS
+        value: "24"
+      - key: ALERT_EVALUATION_HOURS
+        value: "120"
+      - key: FIRMS_AREA_BBOX
+        value: "-70.0,-23.5,-57.0,-9.0"
+      - key: FIRMS_SOURCES
+        value: "MODIS_NRT,VIIRS_SNPP_NRT,VIIRS_NOAA20_NRT,VIIRS_NOAA21_NRT"
+      - key: EMAIL_ENABLED
+        value: "false"
+      - key: EMAIL_PROVIDER
+        value: "resend"
+      - key: SMTP_HOST
+        value: "smtp.resend.com"
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USE_SSL
+        value: "true"
+      - key: SMTP_USE_TLS
+        value: "false"
+      - key: SMTP_USER
+        value: "resend"
+      - key: SMTP_FROM
+        value: "CampoSeguro <alertas@camposeguro.app>"
+      - key: AUTH_ENABLED
+        value: "true"
+      - key: ADMIN_USER
+        value: "admin"
+      - key: CLIENT_USER
+        value: "cliente"
+      - key: CLIENT_NAME
+        value: "Cliente CampoSeguro"
+      - key: DEFAULT_ZONE_RADIUS_KM
+        value: "15"
+      - key: CLIENT_MIN_RADIUS_KM
+        value: "1"
+      - key: CLIENT_MAX_RADIUS_KM
+        value: "50"
+      - key: EMAIL_MIN_LEVEL
+        value: "ATENCION"
+      - key: EMAIL_MAX_PER_ZONE
+        value: "1"
+      - key: AUTO_MONITOR_ENABLED
+        value: "true"
+      - key: AUTO_MONITOR_INTERVAL_MINUTES
+        value: "180"
+      - key: AUTO_MONITOR_RUN_ON_STARTUP
+        value: "true"
+      - key: AUTO_MONITOR_START_DELAY_SECONDS
+        value: "45"
+      - key: AUTH_COOKIE_SECURE
+        value: "true"
+      - key: AUTH_SESSION_HOURS
+        value: "12"
