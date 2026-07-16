@@ -148,6 +148,8 @@ def error_page(exc: Exception) -> HTMLResponse:
 
 @app.exception_handler(Exception)
 async def handle_exception(request: Request, exc: Exception):
+    print("CampoSeguro internal error:", repr(exc), flush=True)
+    print(traceback.format_exc(), flush=True)
     return PlainTextResponse("Error interno CampoSeguro. Revisar logs de Render.", status_code=500)
 
 
@@ -356,6 +358,8 @@ def _valid_latlon(lat: float | None, lon: float | None) -> bool:
 
 
 def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    # Mapa tolerante a migraciones: si alguna tabla vieja tiene columnas raras,
+    # no debe tumbar toda la app. El error queda impreso en Render Logs.
     if user_id:
         zones_raw = db.execute(
             """
@@ -379,8 +383,8 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
     zones: list[dict[str, Any]] = []
     for zrow in zones_raw:
         z = dict(zrow)
-        lat = _to_float(z.get("lat"))
-        lon = _to_float(z.get("lon"))
+        lat = _to_float(z.get("lat") or z.get("latitude"))
+        lon = _to_float(z.get("lon") or z.get("longitude"))
         if not _valid_latlon(lat, lon):
             continue
         z["lat"] = lat
@@ -390,37 +394,66 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
             z["foco_count"] = 0
         zones.append(z)
 
-    # Renderizar miles de puntos como SVG puede hacer que parezca que no cargan.
-    # Por eso se limpian coordenadas, se limitan los puntos más recientes y Leaflet usa canvas.
-    focos_raw = db.execute(
-        """
-        SELECT id, source, lat, lon, acq_date, acq_time
-        FROM focos
-        WHERE lat IS NOT NULL AND lon IS NOT NULL
-        ORDER BY id DESC
-        LIMIT 12000
-        """,
-        fetch="all") or []
+    focos_raw = []
+    try:
+        focos_raw = db.execute(
+            """
+            SELECT id, source, lat, lon, acq_date, acq_time, satellite
+            FROM focos
+            WHERE lat IS NOT NULL AND lon IS NOT NULL
+            ORDER BY id DESC
+            LIMIT 6000
+            """,
+            fetch="all") or []
+    except Exception as exc:
+        print("CampoSeguro map focos query error:", repr(exc), flush=True)
+        print(traceback.format_exc(), flush=True)
+        try:
+            focos_raw = db.execute("SELECT * FROM focos ORDER BY id DESC LIMIT 6000", fetch="all") or []
+        except Exception as exc2:
+            print("CampoSeguro map focos fallback error:", repr(exc2), flush=True)
+            print(traceback.format_exc(), flush=True)
+            focos_raw = []
+
     focos: list[dict[str, Any]] = []
     for frow in focos_raw:
-        f = dict(frow)
-        lat = _to_float(f.get("lat"))
-        lon = _to_float(f.get("lon"))
+        f0 = dict(frow)
+        lat = _to_float(f0.get("lat") or f0.get("latitude"))
+        lon = _to_float(f0.get("lon") or f0.get("longitude"))
         if not _valid_latlon(lat, lon):
             continue
-        f["lat"] = round(lat, 5)
-        f["lon"] = round(lon, 5)
-        focos.append(f)
+        source = f0.get("source") or f0.get("satellite") or "FIRMS"
+        focos.append({
+            "id": f0.get("id"),
+            "source": str(source),
+            "lat": round(lat, 5),
+            "lon": round(lon, 5),
+            "acq_date": str(f0.get("acq_date") or f0.get("date") or ""),
+            "acq_time": str(f0.get("acq_time") or f0.get("time") or ""),
+        })
 
-    if user_id:
-        alerts = db.execute("SELECT * FROM zone_alerts WHERE user_id=%s AND active=TRUE", (user_id,), fetch="all") or []
-    else:
-        alerts = db.execute("SELECT * FROM zone_alerts WHERE active=TRUE", fetch="all") or []
-    return zones, focos, [dict(a) for a in alerts]
+    try:
+        if user_id:
+            alerts_raw = db.execute("SELECT * FROM zone_alerts WHERE user_id=%s AND active=TRUE", (user_id,), fetch="all") or []
+        else:
+            alerts_raw = db.execute("SELECT * FROM zone_alerts WHERE active=TRUE", fetch="all") or []
+    except Exception as exc:
+        print("CampoSeguro map alerts query error:", repr(exc), flush=True)
+        print(traceback.format_exc(), flush=True)
+        alerts_raw = []
+    return zones, focos, [dict(a) for a in alerts_raw]
 
 
 def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLResponse:
-    zones, focos, alerts = map_data(user_id)
+    map_error = ""
+    try:
+        zones, focos, alerts = map_data(user_id)
+    except Exception as exc:
+        trace = traceback.format_exc()
+        print("CampoSeguro map_page_html error:", repr(exc), flush=True)
+        print(trace, flush=True)
+        zones, focos, alerts = [], [], []
+        map_error = "<div class='error' style='position:absolute;z-index:999;left:20px;right:20px;top:20px'>No se pudo cargar la información del mapa. Revisa Render Logs.</div>"
     title_text = "Vista cliente" if user_id else "CampoSeguro"
     panel = f"""
     <div class='map-panel'>
@@ -453,7 +486,7 @@ def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLRespo
     zones.forEach(z => {
       const color = levelColor(z.level || 'INFORMATIVO');
       const circle = L.circle([z.lat,z.lon], {radius:(z.radius_km||15)*1000, color:color, fillColor:color, fillOpacity:0.08, weight:3});
-      circle.bindPopup(`<b>${z.name}</b><br>Municipio: ${z.municipio||''}<br>Radio: ${z.radius_km} km<br>Nivel: ${z.level||'Sin alerta'}<br>Focos dentro del radio: ${z.foco_count||0}`);
+      circle.bindPopup(`<b>${z.name || 'Zona'}</b><br>Municipio: ${z.municipio||''}<br>Radio: ${z.radius_km} km<br>Nivel: ${z.level||'Sin alerta'}<br>Focos dentro del radio: ${z.foco_count||0}`);
       circle.addTo(zoneLayer);
       L.circleMarker([z.lat,z.lon], {radius:6, color:'#0f5132', fillColor:'#2563eb', fillOpacity:0.9}).addTo(zoneLayer);
       bounds.push([z.lat,z.lon]);
@@ -464,7 +497,7 @@ def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLRespo
       if(!Number.isFinite(lat) || !Number.isFinite(lon)) return;
       const isModis = (f.source||'').includes('MODIS');
       const color = isModis ? '#ff7a1a' : '#e03131';
-      const m = L.circleMarker([lat,lon], {radius:3, color:color, fillColor:color, fillOpacity:0.7, weight:1});
+      const m = L.circleMarker([lat,lon], {radius:3, color:color, fillColor:color, fillOpacity:0.65, weight:1});
       m.bindPopup(`<b>Foco FIRMS</b><br>Fuente: ${f.source||''}<br>Fecha: ${f.acq_date||''} ${f.acq_time||''}<br>${lat.toFixed(5)}, ${lon.toFixed(5)}`);
       m.addTo(focoLayer);
       focoBounds.push([lat,lon]);
@@ -474,8 +507,8 @@ def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLRespo
     function showFocos(){ if(map.hasLayer(zoneLayer)) map.removeLayer(zoneLayer); if(!map.hasLayer(focoLayer)) map.addLayer(focoLayer); if(focoBounds.length){ map.fitBounds(focoBounds, {padding:[40,40]}); } }
     function showAll(){ if(!map.hasLayer(zoneLayer)) map.addLayer(zoneLayer); if(!map.hasLayer(focoLayer)) map.addLayer(focoLayer); const allBounds = bounds.concat(focoBounds); if(allBounds.length){ map.fitBounds(allBounds, {padding:[40,40]}); } }
     </script>
-    """.replace("__ZONES__", json.dumps(zones, default=str)).replace("__FOCOS__", json.dumps(focos, default=str))
-    return layout("Mapa", panel + js, user, "map-page")
+    """.replace("__ZONES__", json.dumps(zones, default=str, ensure_ascii=False)).replace("__FOCOS__", json.dumps(focos, default=str, ensure_ascii=False))
+    return layout("Mapa", map_error + panel + js, user, "map-page")
 
 
 @app.get("/mapa")
