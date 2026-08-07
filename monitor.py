@@ -313,7 +313,8 @@ def queue_summary_emails() -> int:
         subject, body = build_summary_email(summary)
         dedupe = f"daily:{row['id']}:{today}"
         user = summary["user"]
-        if emailer.queue_email(user["id"], user["email"], "daily_summary", subject, body, dedupe):
+        recipient = (user.get("alert_email") or user["email"] or "").strip()
+        if recipient and emailer.queue_email(user["id"], recipient, "daily_summary", subject, body, dedupe):
             queued += 1
     return queued
 
@@ -323,7 +324,7 @@ def queue_urgent_emails() -> int:
         return 0
     rows = db.execute(
         """
-        SELECT a.*, u.email, u.name AS user_name, z.name AS zone_name, z.municipio, z.radius_km, f.lat AS foco_lat, f.lon AS foco_lon, f.source
+        SELECT a.*, u.email, u.alert_email, u.name AS user_name, z.name AS zone_name, z.municipio, z.radius_km, f.lat AS foco_lat, f.lon AS foco_lon, f.source
         FROM zone_alerts a
         JOIN users u ON u.id=a.user_id
         JOIN zones z ON z.id=a.zone_id
@@ -364,7 +365,8 @@ def queue_urgent_emails() -> int:
             "Nota: CampoSeguro es informativo y no reemplaza sistemas oficiales de emergencia."
         )
         dedupe = f"urgent:{a['user_id']}:{a['zone_id']}:{int(time.time() // (config.EMAIL_URGENT_COOLDOWN_HOURS * 3600))}"
-        if emailer.queue_email(a["user_id"], a["email"], "urgent", subject, body, dedupe):
+        recipient = (a.get("alert_email") or a["email"] or "").strip()
+        if recipient and emailer.queue_email(a["user_id"], recipient, "urgent", subject, body, dedupe):
             queued += 1
     return queued
 
