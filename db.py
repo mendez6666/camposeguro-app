@@ -80,6 +80,10 @@ def init_db() -> None:
             role TEXT NOT NULL DEFAULT 'client',
             password_hash TEXT DEFAULT '',
             client_token TEXT UNIQUE NOT NULL,
+            subscription_status TEXT NOT NULL DEFAULT 'active',
+            paid_until DATE,
+            plan_code TEXT DEFAULT 'piloto',
+            suspended_at TIMESTAMPTZ,
             active BOOLEAN NOT NULL DEFAULT TRUE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
@@ -163,6 +167,12 @@ def init_db() -> None:
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'client';",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT DEFAULT '';",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS client_token TEXT;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT NOT NULL DEFAULT 'active';",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS paid_until DATE;",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_code TEXT DEFAULT 'piloto';",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ;",
+        "UPDATE users SET subscription_status='active' WHERE subscription_status IS NULL OR subscription_status='';",
+        "UPDATE users SET plan_code='piloto' WHERE plan_code IS NULL OR plan_code='';",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;",
         "UPDATE users SET client_token = substr(md5(random()::text || clock_timestamp()::text),1,24) WHERE client_token IS NULL OR client_token='';",
         "ALTER TABLE users ALTER COLUMN client_token SET NOT NULL;",

@@ -1,23 +1,25 @@
-CampoSeguro v4.2.1
+CampoSeguro v4.2.3
 
-Esta versión agrega:
-- filtro por país en el mapa regional;
-- carga de zonas por GPS, coordenadas o enlace de Google Maps;
-- creación de nuevas zonas desde el portal cliente.
+Esta versión integra dos cosas antes de pagos con tarjeta:
 
-NO subir:
-- camposeguro.db
-- __pycache__
-- archivos .pyc
+1. Zonas sin duplicados:
+- El botón se bloquea al guardar.
+- Se evita crear copias por doble clic.
+- Hay botón para eliminar zona.
+- Hay limpieza de duplicadas.
 
-Subir recomendado:
-- app.py
-- config.py
-- README.md
+2. Control de pago mensual:
+- Cada cliente tiene estado de pago.
+- Cada cliente puede tener fecha Pagado hasta.
+- Si la fecha vence, CampoSeguro suspende al cliente automáticamente.
+- No se borran sus zonas.
+- El cliente suspendido no recibe alertas ni correos y no accede al panel operativo.
+- El admin puede reactivar por 30 días.
 
-Después de desplegar en Render, probar:
+Después de subir, probar:
 /healthz
-/mapa
+/usuarios
 /zonas
-/cliente/zonas
-/cliente/zonas/nueva
+/cliente
+/monitor
+/correos

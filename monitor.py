@@ -149,6 +149,8 @@ def recalc_alerts() -> int:
         FROM zones z
         JOIN users u ON u.id=z.user_id
         WHERE z.active=TRUE AND u.active=TRUE AND u.role='client'
+          AND COALESCE(u.subscription_status,'active') IN ('active','trial')
+          AND (u.paid_until IS NULL OR u.paid_until >= CURRENT_DATE)
         ORDER BY z.user_id, z.name
         """,
         fetch="all",
@@ -212,7 +214,9 @@ def recalc_alerts() -> int:
 
 
 def user_alert_summary(user_id: int) -> dict[str, Any] | None:
-    user = db.execute("SELECT * FROM users WHERE id=%s AND active=TRUE", (user_id,), fetch="one")
+    user = db.execute("""SELECT * FROM users WHERE id=%s AND active=TRUE
+        AND COALESCE(subscription_status,'active') IN ('active','trial')
+        AND (paid_until IS NULL OR paid_until >= CURRENT_DATE)""", (user_id,), fetch="one")
     if not user:
         return None
     alerts = db.execute(
@@ -298,6 +302,8 @@ def queue_summary_emails() -> int:
         FROM users u
         JOIN zone_alerts a ON a.user_id=u.id
         WHERE u.active=TRUE AND u.role='client' AND a.active=TRUE
+          AND COALESCE(u.subscription_status,'active') IN ('active','trial')
+          AND (u.paid_until IS NULL OR u.paid_until >= CURRENT_DATE)
         ORDER BY u.id
         """,
         fetch="all",
@@ -313,8 +319,7 @@ def queue_summary_emails() -> int:
         subject, body = build_summary_email(summary)
         dedupe = f"daily:{row['id']}:{today}"
         user = summary["user"]
-        recipient = (user.get("alert_email") or user["email"] or "").strip()
-        if recipient and emailer.queue_email(user["id"], recipient, "daily_summary", subject, body, dedupe):
+        if emailer.queue_email(user["id"], user["email"], "daily_summary", subject, body, dedupe):
             queued += 1
     return queued
 
@@ -324,12 +329,14 @@ def queue_urgent_emails() -> int:
         return 0
     rows = db.execute(
         """
-        SELECT a.*, u.email, u.alert_email, u.name AS user_name, z.name AS zone_name, z.municipio, z.radius_km, f.lat AS foco_lat, f.lon AS foco_lon, f.source
+        SELECT a.*, u.email, u.name AS user_name, z.name AS zone_name, z.municipio, z.radius_km, f.lat AS foco_lat, f.lon AS foco_lon, f.source
         FROM zone_alerts a
         JOIN users u ON u.id=a.user_id
         JOIN zones z ON z.id=a.zone_id
         LEFT JOIN focos f ON f.id=a.nearest_foco_id
         WHERE a.active=TRUE AND a.level='CRITICO' AND u.active=TRUE
+          AND COALESCE(u.subscription_status,'active') IN ('active','trial')
+          AND (u.paid_until IS NULL OR u.paid_until >= CURRENT_DATE)
         ORDER BY a.min_distance_km ASC
         """,
         fetch="all",
@@ -365,8 +372,7 @@ def queue_urgent_emails() -> int:
             "Nota: CampoSeguro es informativo y no reemplaza sistemas oficiales de emergencia."
         )
         dedupe = f"urgent:{a['user_id']}:{a['zone_id']}:{int(time.time() // (config.EMAIL_URGENT_COOLDOWN_HOURS * 3600))}"
-        recipient = (a.get("alert_email") or a["email"] or "").strip()
-        if recipient and emailer.queue_email(a["user_id"], recipient, "urgent", subject, body, dedupe):
+        if emailer.queue_email(a["user_id"], a["email"], "urgent", subject, body, dedupe):
             queued += 1
     return queued
 

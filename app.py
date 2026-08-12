@@ -8,6 +8,7 @@ import re
 import threading
 import time
 import traceback
+from datetime import date
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -136,26 +137,61 @@ def parse_coordinates_text(text: str) -> tuple[float | None, float | None]:
 
 
 def zone_location_widget(prefix: str = "") -> str:
-    """Bloque de ayuda para cargar una zona desde GPS, Google Maps o coordenadas."""
+    """Bloque de ayuda para cargar una zona desde GPS, Google Maps, coordenadas o clic en mapa."""
     return """
     <div class='notice'>
-      <b>Cómo registrar el punto:</b> puedes pegar un enlace de Google Maps, escribir coordenadas manuales o usar la ubicación actual del celular/computadora. Si estás en la finca sin internet, guarda las coordenadas con el GPS del celular y cárgalas después cuando tengas conexión.
+      <b>Cómo registrar el punto:</b> puedes pegar un enlace de Google Maps, escribir coordenadas manuales, usar la ubicación actual del celular/computadora o hacer clic en el mapa. Si estás en la finca sin internet, guarda las coordenadas con el GPS del celular y cárgalas después cuando tengas conexión.
     </div>
     <label>Enlace de Google Maps o coordenadas</label>
     <textarea name='coords_text' rows='3' placeholder='Ejemplos: -17.7833, -63.1821  |  https://maps.google.com/?q=-17.7833,-63.1821'></textarea>
-    <button class='btn' type='button' onclick='usarMiUbicacion()'>Usar mi ubicación actual</button>
+    <div style='display:flex; gap:10px; flex-wrap:wrap; margin:8px 0 12px;'>
+      <button class='btn' type='button' onclick='usarMiUbicacion()'>Usar mi ubicación actual</button>
+      <button class='btn' type='button' onclick='centrarMapaEnFormulario()'>Ver punto en mapa</button>
+    </div>
+    <div class='small' style='margin:6px 0 8px;'>También puedes hacer clic sobre el mapa para llenar latitud y longitud.</div>
+    <div id='zone_pick_map' style='height:360px; border-radius:14px; border:1px solid #cfd8dc; margin:10px 0 16px; overflow:hidden;'></div>
+    <link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'>
+    <script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>
     <script>
+    let zonePickMap = null;
+    let zonePickMarker = null;
+    function setZonaCoords(lat, lon){
+      const latInput = document.querySelector('input[name="lat"]');
+      const lonInput = document.querySelector('input[name="lon"]');
+      if(latInput) latInput.value = Number(lat).toFixed(6);
+      if(lonInput) lonInput.value = Number(lon).toFixed(6);
+      if(zonePickMap){
+        if(zonePickMarker){ zonePickMarker.setLatLng([lat, lon]); }
+        else { zonePickMarker = L.marker([lat, lon]).addTo(zonePickMap); }
+        zonePickMap.setView([lat, lon], Math.max(zonePickMap.getZoom(), 12));
+      }
+    }
+    function iniciarMapaZona(){
+      const div = document.getElementById('zone_pick_map');
+      if(!div || zonePickMap || typeof L === 'undefined') return;
+      zonePickMap = L.map('zone_pick_map').setView([-17.8, -63.18], 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'© OpenStreetMap'}).addTo(zonePickMap);
+      zonePickMap.on('click', function(e){ setZonaCoords(e.latlng.lat, e.latlng.lng); });
+      setTimeout(function(){ zonePickMap.invalidateSize(); }, 500);
+    }
     function usarMiUbicacion(){
       if(!navigator.geolocation){ alert('Este navegador no permite leer ubicación GPS.'); return; }
       navigator.geolocation.getCurrentPosition(function(pos){
-        const lat = pos.coords.latitude.toFixed(6);
-        const lon = pos.coords.longitude.toFixed(6);
-        const latInput = document.querySelector('input[name="lat"]');
-        const lonInput = document.querySelector('input[name="lon"]');
-        if(latInput) latInput.value = lat;
-        if(lonInput) lonInput.value = lon;
-      }, function(){ alert('No se pudo obtener ubicación. Puedes pegar coordenadas o enlace de Google Maps.'); }, {enableHighAccuracy:true, timeout:12000});
+        setZonaCoords(pos.coords.latitude, pos.coords.longitude);
+      }, function(){ alert('No se pudo obtener ubicación. Puedes pegar coordenadas, usar el mapa o enlace de Google Maps.'); }, {enableHighAccuracy:true, timeout:12000});
     }
+    function centrarMapaEnFormulario(){
+      const lat = parseFloat((document.querySelector('input[name="lat"]')||{}).value);
+      const lon = parseFloat((document.querySelector('input[name="lon"]')||{}).value);
+      if(!Number.isFinite(lat) || !Number.isFinite(lon)){ alert('Primero escribe latitud y longitud, pega coordenadas, usa GPS o haz clic en el mapa.'); return; }
+      setZonaCoords(lat, lon);
+    }
+    function bloquearEnvioZona(form){
+      const btn = form.querySelector('button[type="submit"]');
+      if(btn){ btn.disabled = true; btn.innerText = 'Guardando...'; }
+      return true;
+    }
+    document.addEventListener('DOMContentLoaded', iniciarMapaZona);
     </script>
     """
 
@@ -171,6 +207,7 @@ def lat_lon_from_form(form) -> tuple[float, float]:
 
 
 def current_user(request: Request) -> dict[str, Any] | None:
+    maybe_enforce_expired_subscriptions()
     uid = request.session.get("user_id")
     if not uid:
         return None
@@ -244,7 +281,9 @@ async def handle_exception(request: Request, exc: Exception):
 @app.on_event("startup")
 def startup() -> None:
     db.init_db()
+    ensure_payment_schema()
     db.seed_data()
+    enforce_expired_subscriptions()
     if config.AUTO_MONITOR_ENABLED:
         start_auto_monitor_thread()
 
@@ -284,6 +323,133 @@ def run_monitor_background(trigger: str) -> bool:
 
     threading.Thread(target=job, daemon=True).start()
     return True
+
+
+_recalc_lock = threading.Lock()
+
+
+def recalc_alerts_background(trigger: str = "cambio-zona") -> bool:
+    """Recalcula alertas sin bloquear la pantalla de creación/edición de zonas."""
+    if not _recalc_lock.acquire(blocking=False):
+        return False
+
+    def job() -> None:
+        try:
+            db.set_state("status", f"Recalculando alertas: {trigger}")
+            monitor.recalc_alerts()
+            db.set_state("status", "Correcto")
+            db.set_state("last_error", "")
+        except Exception as exc:
+            db.set_state("status", "Error recálculo")
+            db.set_state("last_error", repr(exc))
+        finally:
+            _recalc_lock.release()
+
+    threading.Thread(target=job, daemon=True).start()
+    return True
+
+
+def duplicate_zone(user_id: int, name: str, lat: float, lon: float, exclude_id: int | None = None) -> dict[str, Any] | None:
+    """Detecta zonas duplicadas para evitar dobles clics o registros repetidos."""
+    sql = """
+        SELECT id, name, lat, lon
+        FROM zones
+        WHERE user_id=%s AND active=TRUE
+          AND (%s IS NULL OR id <> %s)
+          AND (LOWER(TRIM(name)) = LOWER(TRIM(%s)) OR (ABS(lat - %s) < 0.00015 AND ABS(lon - %s) < 0.00015))
+        ORDER BY id
+        LIMIT 1
+    """
+    return db.execute(sql, (user_id, exclude_id, exclude_id, name, lat, lon), fetch="one")
+
+
+def ensure_payment_schema() -> None:
+    """Migración suave para control comercial de pagos/suscripciones."""
+    db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT NOT NULL DEFAULT 'active'")
+    db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS paid_until DATE")
+    db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_code TEXT DEFAULT 'piloto'")
+    db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ")
+    db.execute("UPDATE users SET subscription_status='active' WHERE subscription_status IS NULL OR subscription_status=''")
+    db.execute("UPDATE users SET plan_code='piloto' WHERE plan_code IS NULL OR plan_code=''")
+
+
+def enforce_expired_subscriptions() -> int:
+    """Suspende clientes vencidos sin borrar sus zonas."""
+    updated = db.execute("""
+        UPDATE users
+        SET subscription_status='suspended', suspended_at=now()
+        WHERE active=TRUE AND role='client'
+          AND COALESCE(subscription_status,'active') IN ('active','trial','past_due')
+          AND paid_until IS NOT NULL
+          AND paid_until < CURRENT_DATE
+    """)
+    db.execute("""
+        DELETE FROM zone_alerts
+        WHERE user_id IN (
+          SELECT id FROM users
+          WHERE role='client' AND COALESCE(subscription_status,'active')='suspended'
+        )
+    """)
+    return int(updated or 0)
+
+
+_payment_enforce_last = 0.0
+
+
+def maybe_enforce_expired_subscriptions() -> None:
+    global _payment_enforce_last
+    now_ts = time.time()
+    if now_ts - _payment_enforce_last < 300:
+        return
+    _payment_enforce_last = now_ts
+    try:
+        enforce_expired_subscriptions()
+    except Exception as exc:
+        print("No se pudo verificar pagos vencidos:", repr(exc), flush=True)
+
+
+def _date_value(value: Any):
+    if not value:
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except Exception:
+        return None
+
+
+def user_subscription_active(user: dict[str, Any]) -> bool:
+    if user.get("role") == "admin":
+        return True
+    status = str(user.get("subscription_status") or "active").lower()
+    if status not in {"active", "trial"}:
+        return False
+    paid_until = _date_value(user.get("paid_until"))
+    if paid_until is not None and paid_until < date.today():
+        return False
+    return True
+
+
+def payment_badge(user: dict[str, Any]) -> str:
+    status = str(user.get("subscription_status") or "active").lower()
+    paid_until = user.get("paid_until") or "sin vencimiento"
+    label = {"active":"ACTIVO", "trial":"PRUEBA", "past_due":"VENCIDO", "suspended":"SUSPENDIDO", "canceled":"CANCELADO"}.get(status, status.upper())
+    css = "INFORMATIVO" if status in {"active", "trial"} else "CRITICO"
+    return f"<span class='badge {css}'>{esc(label)}</span><br><span class='small'>Vence: {esc(paid_until)}</span>"
+
+
+def suspended_client_response(user: dict[str, Any]) -> HTMLResponse:
+    body = f"""
+    <div class='card'>
+      <h2>Acceso suspendido</h2>
+      <div class='error'>Tu suscripción de CampoSeguro está suspendida o vencida.</div>
+      <p>Por seguridad comercial, tus zonas no se eliminan. Quedan guardadas y se reactivan cuando el pago se regularice.</p>
+      <p><b>Estado:</b> {esc(user.get('subscription_status') or 'suspended')}<br><b>Vence:</b> {esc(user.get('paid_until') or 'sin fecha')}</p>
+      <a class='btn primary' href='/logout'>Salir</a>
+    </div>
+    """
+    return layout("Acceso suspendido", body, user)
 
 
 @app.get("/healthz")
@@ -417,6 +583,8 @@ def cliente_inicio(request: Request):
         return user
     if user["role"] == "admin":
         return RedirectResponse("/", status_code=303)
+    if not user_subscription_active(user):
+        return suspended_client_response(user)
     stats = counts_for(user["id"])
     body = """
     <div class='card'>
@@ -657,6 +825,7 @@ def cliente_mapa(request: Request):
     user = require_login(request)
     if isinstance(user, RedirectResponse): return user
     if user["role"] == "admin": return RedirectResponse("/mapa", status_code=303)
+    if not user_subscription_active(user): return suspended_client_response(user)
     return map_page_html(request, user, user["id"])
 
 
@@ -749,23 +918,25 @@ def cliente_alertas(request: Request):
     user = require_login(request)
     if isinstance(user, RedirectResponse): return user
     if user["role"] == "admin": return RedirectResponse("/alertas", status_code=303)
+    if not user_subscription_active(user): return suspended_client_response(user)
     body = "<div class='card'><h2>Mis alertas</h2><p>Alertas informativas generadas por cercanía de focos de calor a tus zonas monitoreadas.</p><div class='notice'>Vista filtrada por tu usuario.</div></div>" + alerts_cards(alerts_query(user["id"]))
     return layout("Mis alertas", body, user)
 
 
-def zones_table(rows, client=False) -> str:
-    if not rows:
-        return "<p>No hay zonas registradas.</p>"
-    out = ["<table><thead><tr><th>Zona</th><th>Usuario</th><th>País</th><th>Municipio</th><th>Coordenadas</th><th>Radio actual</th><th>Nuevo radio</th></tr></thead><tbody>"]
+def zones_table(rows, client: bool = False) -> str:
     action = "/cliente/zonas/radio" if client else "/zonas/radio"
+    delete_action = "/cliente/zonas/eliminar" if client else "/zonas/eliminar"
+    out = ["<table><thead><tr><th>Zona</th><th>Usuario</th><th>País</th><th>Municipio</th><th>Coordenadas</th><th>Radio actual</th><th>Nuevo radio</th><th>Acción</th></tr></thead><tbody>"]
     for z in rows:
         out.append(f"""
         <tr><td><b>{esc(z['name'])}</b></td><td>{esc(z.get('user_name',''))}</td><td>{esc(z.get('country','Bolivia'))}</td><td>{esc(z.get('municipio',''))}</td>
         <td>{float(z['lat']):.5f}, {float(z['lon']):.5f}</td><td>{float(z['radius_km']):.1f} km</td>
-        <td><form method='post' action='{action}' style='display:flex;gap:8px;align-items:center'>
+        <td><form method='post' action='{action}' class='inline-zone-form' style='display:flex;gap:8px;align-items:center'>
         <input type='hidden' name='zone_id' value='{esc(z['id'])}'><select name='radius_km'>
         {''.join(f"<option value='{r}' {'selected' if int(round(float(z['radius_km'])))==r else ''}>{r} km</option>" for r in [3,5,10,15,20,25,30,40,50])}
-        </select><button class='btn primary' type='submit'>Guardar</button></form></td></tr>
+        </select><button class='btn primary' type='submit'>Guardar</button></form></td>
+        <td><form method='post' action='{delete_action}' onsubmit="return confirm('¿Eliminar esta zona monitoreada?');" style='display:inline'>
+        <input type='hidden' name='zone_id' value='{esc(z['id'])}'><button class='btn danger' type='submit'>Eliminar</button></form></td></tr>
         """)
     out.append("</tbody></table>")
     return ''.join(out)
@@ -775,8 +946,13 @@ def zones_table(rows, client=False) -> str:
 def zonas(request: Request):
     user = require_admin(request)
     if isinstance(user, RedirectResponse): return user
-    rows = db.execute("SELECT z.*, u.name AS user_name FROM zones z JOIN users u ON u.id=z.user_id ORDER BY u.name,z.name", fetch="all") or []
-    body = "<div class='card'><h2>Zonas monitoreadas</h2><a class='btn primary' href='/zonas/nueva'>Nueva zona</a><div class='notice'>Cambiar el radio recalcula las alertas de zona sin descargar nuevamente FIRMS.</div>" + zones_table(rows) + "</div>"
+    rows = db.execute("SELECT z.*, u.name AS user_name FROM zones z JOIN users u ON u.id=z.user_id WHERE z.active=TRUE ORDER BY u.name,z.name", fetch="all") or []
+    body = """<div class='card'><h2>Zonas monitoreadas</h2>
+    <a class='btn primary' href='/zonas/nueva'>Nueva zona</a>
+    <form method='post' action='/zonas/limpiar-duplicadas' style='display:inline' onsubmit="return confirm('¿Limpiar zonas duplicadas exactas?');">
+      <button class='btn danger' type='submit'>Limpiar duplicadas</button>
+    </form>
+    <div class='notice'>Cambiar el radio recalcula las alertas de zona sin descargar nuevamente FIRMS. Si una zona tarda en guardar, no vuelvas a presionar: el botón se bloquea automáticamente.</div>""" + zones_table(rows) + "</div>"
     return layout("Zonas", body, user)
 
 
@@ -785,7 +961,8 @@ def cliente_zonas(request: Request):
     user = require_login(request)
     if isinstance(user, RedirectResponse): return user
     if user["role"] == "admin": return RedirectResponse("/zonas", status_code=303)
-    rows = db.execute("SELECT z.*, %s AS user_name FROM zones z WHERE z.user_id=%s ORDER BY z.name", (user["name"], user["id"]), fetch="all") or []
+    if not user_subscription_active(user): return suspended_client_response(user)
+    rows = db.execute("SELECT z.*, %s AS user_name FROM zones z WHERE z.user_id=%s AND z.active=TRUE ORDER BY z.name", (user["name"], user["id"]), fetch="all") or []
     body = "<div class='card'><h2>Mis zonas</h2><p>Ajusta el radio de alerta de cada zona. Un radio más corto reduce alertas lejanas y evita saturar el correo.</p><a class='btn primary' href='/cliente/zonas/nueva'>Agregar nueva zona</a><div class='notice'>Recomendación inicial: 15 km. Para predios pequeños: 3 a 10 km. Para municipios o áreas grandes: 15 a 30 km.</div>" + zones_table(rows, client=True) + "</div>"
     return layout("Mis zonas", body, user)
 
@@ -793,6 +970,7 @@ def cliente_zonas(request: Request):
 async def update_zone_radius(request: Request, client: bool):
     user = require_login(request)
     if isinstance(user, RedirectResponse): return user
+    if client and not user_subscription_active(user): return suspended_client_response(user)
     form = await request.form()
     zone_id = int(form.get("zone_id"))
     radius = float(form.get("radius_km"))
@@ -801,7 +979,7 @@ async def update_zone_radius(request: Request, client: bool):
     else:
         if user["role"] != "admin": return RedirectResponse("/cliente", status_code=303)
         db.execute("UPDATE zones SET radius_km=%s WHERE id=%s", (radius, zone_id))
-    monitor.recalc_alerts()
+    recalc_alerts_background("radio-zona")
     return RedirectResponse("/cliente/zonas" if client else "/zonas", status_code=303)
 
 
@@ -815,15 +993,65 @@ async def cliente_zonas_radio(request: Request):
     return await update_zone_radius(request, True)
 
 
+@app.post("/zonas/eliminar")
+async def zonas_eliminar(request: Request):
+    user = require_admin(request)
+    if isinstance(user, RedirectResponse): return user
+    form = await request.form()
+    zone_id = int(form.get("zone_id"))
+    db.execute("UPDATE zones SET active=FALSE WHERE id=%s", (zone_id,))
+    db.execute("DELETE FROM zone_alerts WHERE zone_id=%s", (zone_id,))
+    recalc_alerts_background("eliminar-zona-admin")
+    return RedirectResponse("/zonas", status_code=303)
+
+
+@app.post("/cliente/zonas/eliminar")
+async def cliente_zonas_eliminar(request: Request):
+    user = require_login(request)
+    if isinstance(user, RedirectResponse): return user
+    if user["role"] == "admin": return RedirectResponse("/zonas", status_code=303)
+    if not user_subscription_active(user): return suspended_client_response(user)
+    form = await request.form()
+    zone_id = int(form.get("zone_id"))
+    db.execute("UPDATE zones SET active=FALSE WHERE id=%s AND user_id=%s", (zone_id, user["id"]))
+    db.execute("DELETE FROM zone_alerts WHERE zone_id=%s", (zone_id,))
+    recalc_alerts_background("eliminar-zona-cliente")
+    return RedirectResponse("/cliente/zonas", status_code=303)
+
+
+@app.post("/zonas/limpiar-duplicadas")
+async def zonas_limpiar_duplicadas(request: Request):
+    user = require_admin(request)
+    if isinstance(user, RedirectResponse): return user
+    rows = db.execute("SELECT id,user_id,name,lat,lon FROM zones WHERE active=TRUE ORDER BY id", fetch="all") or []
+    seen = set()
+    deleted = 0
+    for r in rows:
+        key = (int(r["user_id"]), str(r["name"]).strip().lower(), round(float(r["lat"]), 5), round(float(r["lon"]), 5))
+        if key in seen:
+            db.execute("UPDATE zones SET active=FALSE WHERE id=%s", (r["id"],))
+            db.execute("DELETE FROM zone_alerts WHERE zone_id=%s", (r["id"],))
+            deleted += 1
+        else:
+            seen.add(key)
+    recalc_alerts_background("limpiar-duplicadas")
+    return layout("Duplicadas", f"<div class='card'><h2>Limpieza completada</h2><div class='success'>Zonas duplicadas desactivadas: {deleted}</div><a class='btn primary' href='/zonas'>Volver a zonas</a></div>", user)
+
+
 @app.get("/usuarios")
 def usuarios(request: Request):
     user = require_admin(request)
     if isinstance(user, RedirectResponse): return user
-    rows = db.execute("SELECT u.*, (SELECT COUNT(*) FROM zones z WHERE z.user_id=u.id) AS zones_count FROM users u ORDER BY role,name", fetch="all") or []
-    body = "<div class='card'><h2>Usuarios y responsables</h2><a class='btn primary' href='/usuarios/nuevo'>Nuevo usuario</a><div class='notice'>Cada cliente ingresa con su correo y contraseña/token. Ya no se usa CLIENT_USER_ID para separar clientes.</div><table><thead><tr><th>ID</th><th>Nombre</th><th>Correo</th><th>País</th><th>Rol</th><th>Zonas</th><th>Acceso</th><th>Acción</th></tr></thead><tbody>"
+    enforce_expired_subscriptions()
+    rows = db.execute("SELECT u.*, (SELECT COUNT(*) FROM zones z WHERE z.user_id=u.id AND z.active=TRUE) AS zones_count FROM users u ORDER BY role,name", fetch="all") or []
+    body = "<div class='card'><h2>Usuarios y responsables</h2><a class='btn primary' href='/usuarios/nuevo'>Nuevo usuario</a><div class='notice'>No se eliminan zonas por falta de pago: el cliente se suspende y las zonas quedan guardadas para reactivación.</div><table><thead><tr><th>ID</th><th>Nombre</th><th>Correo</th><th>País</th><th>Rol</th><th>Zonas</th><th>Pago</th><th>Acceso</th><th>Acción</th></tr></thead><tbody>"
     for r in rows:
         acceso = f"Correo: {r['email']}<br>Token: {str(r['client_token'])[:8]}..."
-        body += f"<tr><td>{r['id']}</td><td>{esc(r['name'])}<br><span class='small'>{esc(r['organization'])}</span></td><td>{esc(r['email'])}</td><td>{esc(r.get('country',''))}</td><td>{esc(r['role'])}</td><td>{esc(r['zones_count'])}</td><td>{acceso}</td><td><a class='btn' href='/usuarios/{r['id']}/editar'>Editar</a></td></tr>"
+        if r['role'] == 'client':
+            pay_actions = f"<form method='post' action='/usuarios/{r['id']}/suspender' style='display:inline'><button class='btn danger' type='submit'>Suspender</button></form><form method='post' action='/usuarios/{r['id']}/reactivar' style='display:inline'><button class='btn primary' type='submit'>Reactivar 30 días</button></form>"
+        else:
+            pay_actions = ""
+        body += f"<tr><td>{r['id']}</td><td>{esc(r['name'])}<br><span class='small'>{esc(r['organization'])}</span></td><td>{esc(r['email'])}</td><td>{esc(r.get('country',''))}</td><td>{esc(r['role'])}</td><td>{esc(r['zones_count'])}</td><td>{payment_badge(r)}</td><td>{acceso}</td><td><a class='btn' href='/usuarios/{r['id']}/editar'>Editar</a>{pay_actions}</td></tr>"
     body += "</tbody></table></div>"
     return layout("Usuarios", body, user)
 
@@ -838,6 +1066,9 @@ def usuario_nuevo(request: Request):
     <div><label>Correo</label><input type='email' name='email' required></div><div><label>Teléfono</label><input name='phone'></div>
     <div><label>País</label><select name='country'>{country_options()}</select></div>
     <div><label>Rol</label><select name='role'><option value='client'>Cliente</option><option value='admin'>Administrador</option></select></div>
+    <div><label>Estado de pago</label><select name='subscription_status'><option value='active'>Activo</option><option value='trial'>Prueba</option><option value='suspended'>Suspendido</option><option value='canceled'>Cancelado</option></select></div>
+    <div><label>Pagado hasta</label><input type='date' name='paid_until'></div>
+    <div><label>Plan</label><input name='plan_code' value='piloto'></div>
     <div><label>Contraseña inicial</label><input name='password' value='demo123'></div></div>
     <button class='btn primary' type='submit'>Crear usuario</button></form></div>
     """
@@ -851,9 +1082,9 @@ async def usuario_nuevo_post(request: Request):
     form = await request.form()
     import secrets
     db.execute("""
-        INSERT INTO users(name, organization, email, phone, country, role, password_hash, client_token)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-    """, (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('country', config.DEFAULT_COUNTRY)), str(form.get('role','client')), db.password_hash(str(form.get('password','demo123'))), secrets.token_urlsafe(24)))
+        INSERT INTO users(name, organization, email, phone, country, role, subscription_status, paid_until, plan_code, password_hash, client_token)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,NULLIF(%s,'')::date,%s,%s,%s)
+    """, (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('country', config.DEFAULT_COUNTRY)), str(form.get('role','client')), str(form.get('subscription_status','active')), str(form.get('paid_until','')), str(form.get('plan_code','piloto')), db.password_hash(str(form.get('password','demo123'))), secrets.token_urlsafe(24)))
     return RedirectResponse("/usuarios", status_code=303)
 
 
@@ -869,8 +1100,11 @@ def usuario_editar(request: Request, user_id: int):
     <div><label>Correo</label><input type='email' name='email' value='{esc(r['email'])}' required></div><div><label>Teléfono</label><input name='phone' value='{esc(r['phone'])}'></div>
     <div><label>País</label><select name='country'>{country_options(r.get('country'))}</select></div>
     <div><label>Rol</label><select name='role'><option value='client' {'selected' if r['role']=='client' else ''}>Cliente</option><option value='admin' {'selected' if r['role']=='admin' else ''}>Administrador</option></select></div>
+    <div><label>Estado de pago</label><select name='subscription_status'><option value='active' {'selected' if (r.get('subscription_status') or 'active')=='active' else ''}>Activo</option><option value='trial' {'selected' if r.get('subscription_status')=='trial' else ''}>Prueba</option><option value='suspended' {'selected' if r.get('subscription_status')=='suspended' else ''}>Suspendido</option><option value='canceled' {'selected' if r.get('subscription_status')=='canceled' else ''}>Cancelado</option></select></div>
+    <div><label>Pagado hasta</label><input type='date' name='paid_until' value='{esc(r.get('paid_until') or '')}'></div>
+    <div><label>Plan</label><input name='plan_code' value='{esc(r.get('plan_code') or 'piloto')}'></div>
     <div><label>Nueva contraseña opcional</label><input name='password' placeholder='Dejar vacío para mantener'></div></div>
-    <div class='notice'><b>Token de acceso:</b> {esc(r['client_token'])}</div>
+    <div class='notice'><b>Token de acceso:</b> {esc(r['client_token'])}<br><b>Regla comercial:</b> si Pagado hasta vence, el cliente se suspende automáticamente; sus zonas no se borran.</div>
     <button class='btn primary' type='submit'>Guardar</button></form></div>
     """
     return layout("Editar usuario", body, user)
@@ -882,9 +1116,36 @@ async def usuario_editar_post(request: Request, user_id: int):
     if isinstance(user, RedirectResponse): return user
     form = await request.form()
     password = str(form.get('password','')).strip()
-    db.execute("UPDATE users SET name=%s, organization=%s, email=%s, phone=%s, country=%s, role=%s WHERE id=%s", (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('country', config.DEFAULT_COUNTRY)), str(form.get('role','client')), user_id))
+    db.execute("""
+        UPDATE users SET name=%s, organization=%s, email=%s, phone=%s, country=%s, role=%s,
+               subscription_status=%s, paid_until=NULLIF(%s,'')::date, plan_code=%s,
+               suspended_at=CASE WHEN %s='suspended' THEN COALESCE(suspended_at, now()) ELSE NULL END
+        WHERE id=%s
+    """, (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('country', config.DEFAULT_COUNTRY)), str(form.get('role','client')), str(form.get('subscription_status','active')), str(form.get('paid_until','')), str(form.get('plan_code','piloto')), str(form.get('subscription_status','active')), user_id))
     if password:
         db.execute("UPDATE users SET password_hash=%s WHERE id=%s", (db.password_hash(password), user_id))
+    if str(form.get('subscription_status','active')) == 'suspended':
+        db.execute("DELETE FROM zone_alerts WHERE user_id=%s", (user_id,))
+    else:
+        recalc_alerts_background("usuario-reactivado")
+    return RedirectResponse("/usuarios", status_code=303)
+
+
+@app.post("/usuarios/{user_id}/suspender")
+async def usuario_suspender(request: Request, user_id: int):
+    user = require_admin(request)
+    if isinstance(user, RedirectResponse): return user
+    db.execute("UPDATE users SET subscription_status='suspended', suspended_at=now() WHERE id=%s AND role='client'", (user_id,))
+    db.execute("DELETE FROM zone_alerts WHERE user_id=%s", (user_id,))
+    return RedirectResponse("/usuarios", status_code=303)
+
+
+@app.post("/usuarios/{user_id}/reactivar")
+async def usuario_reactivar(request: Request, user_id: int):
+    user = require_admin(request)
+    if isinstance(user, RedirectResponse): return user
+    db.execute("UPDATE users SET subscription_status='active', paid_until=CURRENT_DATE + INTERVAL '30 days', suspended_at=NULL WHERE id=%s AND role='client'", (user_id,))
+    recalc_alerts_background("usuario-reactivado")
     return RedirectResponse("/usuarios", status_code=303)
 
 
@@ -895,7 +1156,7 @@ def zona_nueva(request: Request):
     users = db.execute("SELECT id,name,email FROM users WHERE role='client' AND active=TRUE ORDER BY name", fetch="all") or []
     opts = ''.join(f"<option value='{u['id']}'>{esc(u['name'])} — {esc(u['email'])}</option>" for u in users)
     body = f"""
-    <div class='card'><h2>Nueva zona</h2><form method='post' action='/zonas/nueva'>
+    <div class='card'><h2>Nueva zona</h2><form class='zone-create-form' method='post' action='/zonas/nueva' onsubmit='return bloquearEnvioZona(this);'>
     <div class='form-grid'><div><label>Usuario</label><select name='user_id'>{opts}</select></div><div><label>Nombre de zona</label><input name='name' required></div>
     <div><label>País</label><select name='country'>{country_options()}</select></div><div><label>Municipio / localidad</label><input name='municipio'></div><div><label>Radio km</label><input name='radius_km' value='{config.DEFAULT_ZONE_RADIUS_KM}'></div>
     <div><label>Latitud</label><input name='lat' placeholder='Ej. -17.7833'></div><div><label>Longitud</label><input name='lon' placeholder='Ej. -63.1821'></div></div>
@@ -912,8 +1173,13 @@ async def zona_nueva_post(request: Request):
     form = await request.form()
     try:
         lat, lon = lat_lon_from_form(form)
-        db.execute("INSERT INTO zones(user_id,name,municipio,country,lat,lon,radius_km) VALUES (%s,%s,%s,%s,%s,%s,%s)", (int(form.get('user_id')), str(form.get('name','')), str(form.get('municipio','')), str(form.get('country', config.DEFAULT_COUNTRY)), lat, lon, float(form.get('radius_km') or config.DEFAULT_ZONE_RADIUS_KM)))
-        monitor.recalc_alerts()
+        zone_user_id = int(form.get('user_id'))
+        zone_name = str(form.get('name','')).strip()
+        dupe = duplicate_zone(zone_user_id, zone_name, lat, lon)
+        if dupe:
+            raise ValueError(f"Zona duplicada: ya existe '{dupe['name']}' con coordenadas muy similares. No se creó otra copia.")
+        db.execute("INSERT INTO zones(user_id,name,municipio,country,lat,lon,radius_km) VALUES (%s,%s,%s,%s,%s,%s,%s)", (zone_user_id, zone_name, str(form.get('municipio','')), str(form.get('country', config.DEFAULT_COUNTRY)), lat, lon, float(form.get('radius_km') or config.DEFAULT_ZONE_RADIUS_KM)))
+        recalc_alerts_background("nueva-zona-admin")
         return RedirectResponse("/zonas", status_code=303)
     except Exception as exc:
         return layout("Nueva zona", f"<div class='card'><h2>No se pudo crear la zona</h2><div class='error'>{esc(exc)}</div><a class='btn primary' href='/zonas/nueva'>Volver</a></div>", user)
@@ -924,10 +1190,11 @@ def cliente_zona_nueva(request: Request):
     user = require_login(request)
     if isinstance(user, RedirectResponse): return user
     if user["role"] == "admin": return RedirectResponse("/zonas/nueva", status_code=303)
+    if not user_subscription_active(user): return suspended_client_response(user)
     body = f"""
     <div class='card'><h2>Agregar nueva zona</h2>
     <p>Registra el punto central de tu predio, comunidad, finca o zona de interés.</p>
-    <form method='post' action='/cliente/zonas/nueva'>
+    <form class='zone-create-form' method='post' action='/cliente/zonas/nueva' onsubmit='return bloquearEnvioZona(this);'>
     <div class='form-grid'><div><label>Nombre de zona</label><input name='name' placeholder='Ej. Finca El Carmen' required></div>
     <div><label>País</label><select name='country'>{country_options(user.get('country'))}</select></div>
     <div><label>Municipio / localidad</label><input name='municipio'></div>
@@ -947,14 +1214,19 @@ async def cliente_zona_nueva_post(request: Request):
     user = require_login(request)
     if isinstance(user, RedirectResponse): return user
     if user["role"] == "admin": return RedirectResponse("/zonas/nueva", status_code=303)
+    if not user_subscription_active(user): return suspended_client_response(user)
     form = await request.form()
     try:
         lat, lon = lat_lon_from_form(form)
+        zone_name = str(form.get('name','')).strip()
+        dupe = duplicate_zone(int(user['id']), zone_name, lat, lon)
+        if dupe:
+            raise ValueError(f"Zona duplicada: ya existe '{dupe['name']}' con coordenadas muy similares. No se creó otra copia.")
         db.execute(
             "INSERT INTO zones(user_id,name,municipio,country,lat,lon,radius_km) VALUES (%s,%s,%s,%s,%s,%s,%s)",
-            (int(user['id']), str(form.get('name','')), str(form.get('municipio','')), str(form.get('country', user.get('country') or config.DEFAULT_COUNTRY)), lat, lon, float(form.get('radius_km') or config.DEFAULT_ZONE_RADIUS_KM))
+            (int(user['id']), zone_name, str(form.get('municipio','')), str(form.get('country', user.get('country') or config.DEFAULT_COUNTRY)), lat, lon, float(form.get('radius_km') or config.DEFAULT_ZONE_RADIUS_KM))
         )
-        monitor.recalc_alerts()
+        recalc_alerts_background("nueva-zona-cliente")
         return RedirectResponse("/cliente/zonas", status_code=303)
     except Exception as exc:
         body = f"<div class='card'><h2>No se pudo crear la zona</h2><div class='error'>{esc(exc)}</div><a class='btn primary' href='/cliente/zonas/nueva'>Volver</a></div>"
@@ -1007,6 +1279,7 @@ def cliente_reporte(request: Request):
     user = require_login(request)
     if isinstance(user, RedirectResponse): return user
     if user["role"] == "admin": return RedirectResponse("/reporte", status_code=303)
+    if not user_subscription_active(user): return suspended_client_response(user)
     return report_html(user, user["id"])
 
 
@@ -1031,6 +1304,7 @@ def reporte_csv(request: Request):
 def cliente_reporte_csv(request: Request):
     user = require_login(request)
     if isinstance(user, RedirectResponse): return user
+    if not user_subscription_active(user): return suspended_client_response(user)
     return csv_response(report_rows(user["id"]), "camposeguro_reporte_cliente.csv")
 
 

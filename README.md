@@ -1,39 +1,35 @@
-# CampoSeguro v4.2.1 — Mapa regional y carga de zonas
+# CampoSeguro v4.2.3 — Zonas sin duplicados + control de pagos
 
-Versión regional para Sudamérica con mejoras de visualización y registro de puntos de monitoreo.
+Versión comercial regional para Sudamérica.
 
 ## Cambios principales
 
-- Filtro de mapa por país: Todos, Bolivia, Paraguay, Brasil, Perú, Argentina, Chile, Colombia, Ecuador, Uruguay, Venezuela, Guyana y Surinam.
-- El mapa muestra “focos visualizados” para aclarar que se limita la cantidad de puntos dibujados y así evitar congelar el navegador.
-- Los usuarios/clientes pueden agregar nuevas zonas desde su portal.
-- Las zonas pueden cargarse de tres formas:
-  - Latitud/longitud manual.
-  - Enlace de Google Maps o texto con coordenadas.
-  - Ubicación actual del dispositivo mediante GPS/navegador.
-- El sistema mantiene la separación admin/cliente, alertas por radio y reportes.
+- Mantiene la mejora de v4.2.2: evita duplicados al crear zonas.
+- Agrega botón para eliminar zonas y limpieza de duplicadas.
+- Agrega registro de zonas por GPS, coordenadas, Google Maps o clic en mapa.
+- Agrega control comercial de suscripción por cliente.
+- No elimina automáticamente zonas cuando un cliente no paga.
+- Si vence el pago mensual, el cliente queda suspendido y sus zonas quedan guardadas.
+- Clientes suspendidos no ven mapa, zonas, alertas ni reporte hasta reactivación.
+- Admin puede suspender o reactivar clientes por 30 días.
+- El monitor y los correos ignoran clientes suspendidos.
 
-## Recomendación operativa para clientes
+## Regla comercial recomendada
 
-Para registrar una finca, predio o comunidad:
+No borrar zonas por falta de pago. Suspender el acceso y reactivar cuando pague.
 
-1. Si está en el lugar y tiene internet, puede usar “Usar mi ubicación actual”.
-2. Si está en el lugar pero no tiene internet, puede anotar las coordenadas con el GPS del celular y cargarlas luego.
-3. Si no está en la finca, puede buscar el punto en Google Maps, copiar coordenadas o un enlace que contenga latitud/longitud y pegarlo en CampoSeguro.
+## Subir a GitHub
 
-## Variables recomendadas
-
-FIRMS_AREA_BBOX=-82.0,-56.0,-34.0,13.0
-OPERATING_REGION=Sudamérica
-DEFAULT_COUNTRY=Bolivia
-SUPPORTED_COUNTRIES=Bolivia,Paraguay,Brasil,Perú,Argentina,Chile,Colombia,Ecuador,Uruguay,Venezuela,Guyana,Surinam
-
-## Subida recomendada
-
-Para actualizar desde v4.2, sube principalmente:
+Subir principalmente:
 
 - app.py
 - config.py
+- db.py
+- monitor.py
 - README.md
+- LEEME_PRIMERO.txt
 
-Si quieres hacer reemplazo completo, sube todos los archivos salvo `camposeguro.db` y `__pycache__`.
+No subir:
+
+- camposeguro.db
+- __pycache__

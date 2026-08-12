@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 APP_NAME = "CampoSeguro"
-APP_VERSION = "4.2.1"
+APP_VERSION = "4.2.3"
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -98,3 +98,9 @@ SUPPORTED_COUNTRIES = [c.strip() for c in os.getenv(
     "SUPPORTED_COUNTRIES",
     "Bolivia,Paraguay,Brasil,Perú,Argentina,Chile,Colombia,Ecuador,Uruguay,Venezuela,Guyana,Surinam"
 ).split(",") if c.strip()]
+
+# Control comercial / suscripciones
+DEFAULT_PLAN_CODE = os.getenv("DEFAULT_PLAN_CODE", "piloto").strip()
+DEFAULT_PAID_DAYS = env_int("DEFAULT_PAID_DAYS", 30)
+PAYMENT_GRACE_DAYS = env_int("PAYMENT_GRACE_DAYS", 0)
+
