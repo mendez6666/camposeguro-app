@@ -5,6 +5,7 @@ import html
 import io
 import json
 import re
+import secrets
 import threading
 import time
 import traceback
@@ -75,6 +76,27 @@ pre { background:#111827; color:#f9fafb; padding:18px; border-radius:12px; overf
 .legend-item { display:flex; align-items:center; gap:6px; margin:4px 0; }
 .dot { width:11px; height:11px; border-radius:50%; display:inline-block; }
 .dot.red { background:#e03131; } .dot.orange { background:#ff7a1a; } .dot.blue { background:#2563eb; }
+
+.hero { display:grid; grid-template-columns:1.15fr .85fr; gap:28px; align-items:center; }
+.hero h2 { font-size:42px; line-height:1.05; margin:0 0 14px; }
+.hero p.lead { font-size:18px; line-height:1.55; color:#334155; margin:0 0 18px; }
+.public-nav-note { background:#0b3d28; color:white; display:flex; gap:18px; padding:10px 32px; font-weight:800; font-size:14px; flex-wrap:wrap; }
+.public-nav-note a { opacity:.98; }
+.price-grid { display:grid; grid-template-columns:repeat(3,minmax(220px,1fr)); gap:18px; }
+.plan { background:white; border:1px solid #e5e7eb; border-radius:18px; padding:22px; box-shadow:0 6px 20px rgba(0,0,0,.06); }
+.plan.featured { border:2px solid #1b7b45; }
+.plan h3 { margin:0 0 8px; }
+.plan .price { font-size:26px; font-weight:900; margin:12px 0; color:#0f5132; }
+.checks { margin:14px 0 0; padding-left:18px; color:#334155; line-height:1.7; }
+.steps { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:14px; }
+.step { background:#f8fafc; border-radius:14px; padding:16px; border:1px solid #e5e7eb; }
+.step b { display:block; margin-bottom:6px; color:#0f5132; }
+.hero-map { background:linear-gradient(140deg,#e8f5ee,#ffffff); border:1px solid #dcebe3; border-radius:22px; padding:22px; }
+.hero-map .mini-map { height:260px; border-radius:18px; background:radial-gradient(circle at 32% 45%, rgba(239,68,68,.9) 0 4px, transparent 5px),radial-gradient(circle at 45% 38%, rgba(239,68,68,.9) 0 5px, transparent 6px),radial-gradient(circle at 62% 52%, rgba(249,115,22,.95) 0 6px, transparent 7px),radial-gradient(circle at 52% 62%, rgba(37,99,235,.85) 0 6px, transparent 7px),linear-gradient(135deg,#dcfce7,#bfdbfe); position:relative; overflow:hidden; }
+.hero-map .mini-map:after { content:'Sudamérica'; position:absolute; right:18px; bottom:14px; color:#0f5132; font-weight:900; opacity:.75; }
+.public-cta { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }
+@media (max-width:900px) { .hero { grid-template-columns:1fr; } .price-grid { grid-template-columns:1fr; } .steps { grid-template-columns:1fr; } .hero h2 { font-size:32px; } }
+
 @media (max-width:900px) { .grid { grid-template-columns:repeat(2,1fr); } .form-grid { grid-template-columns:1fr; } .nav { gap:12px; padding:10px 18px; } .page { padding:18px; } .header { padding:14px 18px; } .map-panel { top:145px; left:10px; max-width:170px; } .map-help { top:145px; right:10px; max-width:230px; } }
 @media print { .nav, .btn, .header { display:none !important; } body { background:white; } .card, .stat { box-shadow:none; border:1px solid #ddd; } }
 """
@@ -232,7 +254,8 @@ def require_admin(request: Request) -> dict[str, Any] | RedirectResponse:
 
 def nav_html(user: dict[str, Any] | None) -> str:
     if not user:
-        return ""
+        items = [("/", "Inicio"), ("/planes", "Planes"), ("/registro", "Probar gratis"), ("/login", "Ingresar")]
+        return '<div class="nav">' + ''.join(f'<a href="{esc(h)}">{esc(t)}</a>' for h, t in items) + '</div>'
     if user["role"] == "client":
         items = [
             ("/cliente", "Inicio"), ("/cliente/mapa", "Mapa"), ("/cliente/zonas", "Mis zonas"),
@@ -509,6 +532,144 @@ def suspended_client_response(user: dict[str, Any]) -> HTMLResponse:
     return layout("Acceso suspendido", body, user)
 
 
+
+
+def public_landing_body() -> str:
+    return f"""
+    <div class='card hero'>
+      <div>
+        <div class='badge INFORMATIVO'>Prueba gratuita de {esc(config.FREE_TRIAL_DAYS)} días</div>
+        <h2>Alertas informativas de focos de calor para predios y zonas registradas en Sudamérica</h2>
+        <p class='lead'>CampoSeguro permite registrar una finca, predio, comunidad o municipio, definir un radio de alerta y recibir seguimiento preventivo cuando se detectan focos de calor cercanos.</p>
+        <div class='public-cta'>
+          <a class='btn primary' href='/registro'>Probar gratis {esc(config.FREE_TRIAL_DAYS)} días</a>
+          <a class='btn' href='/planes'>Ver planes</a>
+          <a class='btn' href='/login'>Ya tengo cuenta</a>
+        </div>
+        <div class='notice'>Herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales de emergencia.</div>
+      </div>
+      <div class='hero-map'>
+        <h3>Monitoreo regional</h3>
+        <p class='small'>Focos FIRMS, radios de alerta, reportes y correos resumidos sin saturar al cliente.</p>
+        <div class='mini-map'></div>
+      </div>
+    </div>
+    <div class='card'>
+      <h3>Cómo funciona</h3>
+      <div class='steps'>
+        <div class='step'><b>1. Crea tu cuenta</b>Activa una prueba gratuita controlada por {esc(config.FREE_TRIAL_DAYS)} días.</div>
+        <div class='step'><b>2. Registra tu zona</b>Usa GPS, coordenadas, Google Maps o clic en mapa.</div>
+        <div class='step'><b>3. Define tu radio</b>Elige 3, 5, 10, 15 km o más según tu necesidad.</div>
+        <div class='step'><b>4. Recibe alertas</b>Consulta mapa, alertas y reporte diario sin saturación.</div>
+      </div>
+    </div>
+    <div class='card'>
+      <h3>Para quién sirve</h3>
+      <div class='grid'>
+        <div class='stat'><div class='label'>Productores</div><div class='small'>Predios, fincas y zonas productivas.</div></div>
+        <div class='stat'><div class='label'>Municipios</div><div class='small'>Seguimiento preventivo territorial.</div></div>
+        <div class='stat'><div class='label'>Comunidades</div><div class='small'>Áreas de interés y zonas vulnerables.</div></div>
+        <div class='stat'><div class='label'>Instituciones</div><div class='small'>Proyectos, áreas protegidas y monitoreo ambiental.</div></div>
+      </div>
+    </div>
+    <div class='card'>
+      <h3>Planes iniciales</h3>
+      <div class='price-grid'>
+        <div class='plan'><h3>Predio</h3><div class='price'>Bs 50–100/mes</div><ul class='checks'><li>1 a 2 zonas</li><li>Radio configurable</li><li>Resumen diario</li><li>Alertas críticas</li></ul></div>
+        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>Bs 150–250/mes</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reporte operativo</li><li>Correo anti-saturación</li><li>Soporte inicial</li></ul></div>
+        <div class='plan'><h3>Institucional</h3><div class='price'>Bs 300–800/mes</div><ul class='checks'><li>Varias zonas</li><li>Usuarios y reportes</li><li>Seguimiento territorial</li><li>Configuración asistida</li></ul></div>
+      </div>
+      <div class='public-cta'><a class='btn primary' href='/registro'>Empezar prueba gratis</a><a class='btn' href='/planes'>Comparar planes</a></div>
+    </div>
+    """
+
+
+@app.get("/planes")
+def planes(request: Request):
+    user = current_user(request)
+    if user and user.get("role") == "admin":
+        # El admin puede ver la landing sin salir, pero mantiene navegación de admin solo en su dashboard.
+        pass
+    body = f"""
+    <div class='card'>
+      <h2>Planes CampoSeguro</h2>
+      <p>Empieza con una prueba gratuita de {esc(config.FREE_TRIAL_DAYS)} días. Tus zonas quedan guardadas si luego decides activar una suscripción.</p>
+      <div class='price-grid'>
+        <div class='plan'><h3>Predio</h3><div class='price'>Bs 50–100/mes</div><ul class='checks'><li>1 a 2 zonas monitoreadas</li><li>Mapa y radio configurable</li><li>Resumen diario</li><li>Alertas críticas por correo</li></ul><a class='btn primary' href='/registro?plan=predio'>Probar gratis</a></div>
+        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>Bs 150–250/mes</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reportes operativos</li><li>Seguimiento preventivo</li><li>Configuración asistida inicial</li></ul><a class='btn primary' href='/registro?plan=productor'>Probar gratis</a></div>
+        <div class='plan'><h3>Institucional</h3><div class='price'>Bs 300–800/mes</div><ul class='checks'><li>Varias zonas y usuarios</li><li>Reportes para equipo técnico</li><li>Municipios, comunidades o proyectos</li><li>Acompañamiento de implementación</li></ul><a class='btn primary' href='/registro?plan=institucional'>Solicitar prueba</a></div>
+      </div>
+      <div class='notice'>Los precios piloto pueden ajustarse según número de zonas, país, nivel de soporte y alcance institucional.</div>
+    </div>
+    """
+    return layout("Planes", body, user if user else None)
+
+
+@app.get("/registro")
+def registro_get(request: Request):
+    user = current_user(request)
+    if user:
+        return RedirectResponse("/cliente" if user.get("role") == "client" else "/", status_code=303)
+    plan = esc(request.query_params.get("plan") or "predio")
+    body = f"""
+    <div class='card'>
+      <h2>Probar CampoSeguro gratis por {esc(config.FREE_TRIAL_DAYS)} días</h2>
+      <p>Registra tu cuenta, entra al panel y carga hasta {esc(config.TRIAL_MAX_ZONES)} zona(s) durante la prueba gratuita.</p>
+      <form method='post' action='/registro'>
+        <div class='form-grid'>
+          <div><label>Nombre completo</label><input name='name' required placeholder='Ej. Juan Pérez'></div>
+          <div><label>Organización / predio</label><input name='organization' placeholder='Ej. Finca El Carmen'></div>
+          <div><label>País</label><select name='country'>{country_options(config.DEFAULT_COUNTRY)}</select></div>
+          <div><label>Teléfono / WhatsApp</label><input name='phone' placeholder='+591...'></div>
+          <div><label>Correo</label><input type='email' name='email' required placeholder='tu_correo@gmail.com'></div>
+          <div><label>Contraseña</label><input type='password' name='password' minlength='6' required placeholder='Mínimo 6 caracteres'></div>
+        </div>
+        <input type='hidden' name='plan_code' value='{plan}'>
+        <div class='notice'><b>Prueba gratuita:</b> {esc(config.FREE_TRIAL_DAYS)} días. Si no activas suscripción, el acceso se suspende automáticamente. Tus zonas no se eliminan.</div>
+        <label style='font-weight:500'><input type='checkbox' name='accept' value='1' style='width:auto;margin-right:8px' required> Entiendo que CampoSeguro es informativo y no reemplaza verificación en campo ni sistemas oficiales.</label>
+        <button class='btn primary' type='submit'>Crear cuenta de prueba</button>
+        <a class='btn' href='/login'>Ya tengo cuenta</a>
+      </form>
+    </div>
+    """
+    return layout("Registro", body, None)
+
+
+@app.post("/registro")
+async def registro_post(request: Request):
+    form = await request.form()
+    name = str(form.get("name", "")).strip()
+    organization = str(form.get("organization", "")).strip()
+    email = str(form.get("email", "")).strip().lower()
+    phone = str(form.get("phone", "")).strip()
+    country = str(form.get("country", config.DEFAULT_COUNTRY)).strip() or config.DEFAULT_COUNTRY
+    password = str(form.get("password", ""))
+    plan_code = str(form.get("plan_code", config.DEFAULT_PLAN_CODE)).strip() or config.DEFAULT_PLAN_CODE
+    accept = str(form.get("accept", "")) == "1"
+    errors = []
+    if not name: errors.append("Ingresa tu nombre.")
+    if not email or "@" not in email: errors.append("Ingresa un correo válido.")
+    if len(password) < 6: errors.append("La contraseña debe tener al menos 6 caracteres.")
+    if not accept: errors.append("Debes aceptar que la herramienta es informativa.")
+    existing = db.execute("SELECT id, role, subscription_status FROM users WHERE email=%s AND active=TRUE", (email,), fetch="one") if email else None
+    if existing:
+        errors.append("Este correo ya tiene una cuenta. Ingresa con tu contraseña o solicita reactivación.")
+    if errors:
+        body = "<div class='card'><h2>No se pudo crear la cuenta</h2><div class='error'>" + "<br>".join(esc(e) for e in errors) + "</div><a class='btn primary' href='/registro'>Volver al registro</a><a class='btn' href='/login'>Ingresar</a></div>"
+        return layout("Registro", body, None)
+    user = db.execute(
+        """
+        INSERT INTO users(name, organization, email, phone, country, role, password_hash, client_token,
+                          subscription_status, trial_started_at, trial_until, plan_code, active)
+        VALUES (%s,%s,%s,%s,%s,'client',%s,%s,'trial',CURRENT_DATE,CURRENT_DATE + (%s::int),%s,TRUE)
+        RETURNING id
+        """,
+        (name, organization, email, phone, country, db.password_hash(password), secrets.token_urlsafe(24), int(config.FREE_TRIAL_DAYS), plan_code),
+        fetch="one",
+    )
+    request.session["user_id"] = int(user["id"])
+    return RedirectResponse("/cliente", status_code=303)
+
 @app.get("/healthz")
 def healthz():
     return {"status": "ok", "app": "CampoSeguro", "version": config.APP_VERSION, "auth": True}
@@ -516,6 +677,9 @@ def healthz():
 
 @app.get("/login")
 def login_get(request: Request):
+    existing = current_user(request)
+    if existing:
+        return RedirectResponse("/cliente" if existing.get("role") == "client" else "/", status_code=303)
     body = """
     <div class="login-wrap card">
       <h2>Acceso CampoSeguro</h2>
@@ -525,6 +689,7 @@ def login_get(request: Request):
         <label>Contraseña o token</label><input type="password" name="password" required>
         <button class="btn primary" type="submit">Ingresar</button>
       </form>
+      <div class='notice'>¿Aún no tienes cuenta? <a href='/registro'><b>Prueba gratis CampoSeguro por 5 días.</b></a></div>
     </div>
     """
     return layout("Acceso", body, None)
@@ -551,7 +716,7 @@ async def login_post(request: Request):
 @app.get("/logout")
 def logout(request: Request):
     request.session.clear()
-    return RedirectResponse("/login", status_code=303)
+    return RedirectResponse("/", status_code=303)
 
 
 def counts_for(user_id: int | None = None) -> dict[str, int]:
@@ -584,9 +749,9 @@ def stats_grid(stats: dict[str, int], client: bool = False) -> str:
 
 @app.get("/")
 def inicio(request: Request):
-    user = require_login(request)
-    if isinstance(user, RedirectResponse):
-        return user
+    user = current_user(request)
+    if not user:
+        return layout("Alerta temprana de focos de calor", public_landing_body(), None)
     if user["role"] == "client":
         return RedirectResponse("/cliente", status_code=303)
     stats = counts_for()

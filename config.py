@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 APP_NAME = "CampoSeguro"
-APP_VERSION = "4.2.4"
+APP_VERSION = "4.2.5"
 
 
 def env_bool(name: str, default: bool = False) -> bool:

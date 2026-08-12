@@ -1,45 +1,56 @@
-# CampoSeguro v4.2.4 — Prueba gratis 5 días + suspensión automática
+# CampoSeguro v4.2.5 — Landing pública + registro de prueba gratuita
 
-Versión comercial regional para Sudamérica.
+Versión preparada para convertir CampoSeguro en un producto vendible, no solo en panel privado.
 
 ## Cambios principales
 
-- Mantiene la mejora de v4.2.2: evita duplicados al crear zonas.
-- Agrega botón para eliminar zonas y limpieza de duplicadas.
-- Agrega registro de zonas por GPS, coordenadas, Google Maps o clic en mapa.
-- Agrega control comercial de suscripción por cliente.
-- No elimina automáticamente zonas cuando un cliente no paga.
-- Si vence el pago mensual, el cliente queda suspendido y sus zonas quedan guardadas.
-- Clientes suspendidos no ven mapa, zonas, alertas ni reporte hasta reactivación.
-- Admin puede suspender o reactivar clientes por 30 días.
-- El monitor y los correos ignoran clientes suspendidos.
+- `/` ahora es una landing pública si el visitante no inició sesión.
+- `/planes` muestra planes piloto y beneficios.
+- `/registro` permite crear cuenta de prueba gratuita de 5 días.
+- El registro crea usuario cliente en estado `trial`.
+- El cliente entra automáticamente a `/cliente` después de registrarse.
+- La prueba gratuita conserva el límite configurado de zonas (`TRIAL_MAX_ZONES`).
+- Si la prueba o el pago vencen, el sistema suspende automáticamente sin borrar zonas.
+- `/login` conserva acceso privado para clientes y administrador.
+- Admin autenticado sigue viendo el dashboard interno en `/`.
 
-## Regla comercial recomendada
+## Flujo comercial
 
-No borrar zonas por falta de pago. Suspender el acceso y reactivar cuando pague.
+1. Visitante entra a `https://app.camposeguro.app`.
+2. Ve qué es CampoSeguro, planes y beneficios.
+3. Hace clic en `Probar gratis 5 días`.
+4. Crea cuenta con país, correo, teléfono y contraseña.
+5. Entra al portal cliente.
+6. Registra finca/zona con GPS, Google Maps, coordenadas o clic en mapa.
+7. Si no paga al vencer la prueba, queda suspendido; sus zonas quedan guardadas.
+8. Si paga, se reactiva por 30 días o según la pasarela de pago cuando se integre.
 
-## Subir a GitHub
+## Rutas públicas
 
-Subir principalmente:
+- `/` landing pública
+- `/planes` planes y precios piloto
+- `/registro` registro de prueba gratuita
+- `/login` acceso para clientes existentes
 
-- app.py
-- config.py
-- db.py
-- monitor.py
-- README.md
-- LEEME_PRIMERO.txt
+## Rutas privadas admin
 
-No subir:
+- `/usuarios`
+- `/zonas`
+- `/monitor`
+- `/correos`
+- `/configuracion`
 
-- camposeguro.db
-- __pycache__
+## Rutas privadas cliente
 
+- `/cliente`
+- `/cliente/mapa`
+- `/cliente/zonas`
+- `/cliente/zonas/nueva`
+- `/cliente/alertas`
+- `/cliente/reporte`
 
-## v4.2.4 — prueba gratis 5 días + suspensión automática
-- Cliente nuevo puede iniciar con prueba gratuita de 5 días.
-- Si la prueba vence y no hay pago, el cliente pasa a SUSPENDIDO automáticamente.
-- Si el pago mensual vence, también se suspende automáticamente.
-- No se eliminan zonas ni radios: quedan guardados para reactivación.
-- El admin tiene botones: Prueba 5 días, Suspender y Reactivar 30 días.
-- El monitor y los correos ignoran clientes suspendidos o vencidos.
-- Esta versión prepara la integración futura con pasarela de pago por tarjeta.
+## No subir a GitHub
+
+- `camposeguro.db`
+- `__pycache__`
+- archivos `.pyc`

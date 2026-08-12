@@ -1,35 +1,37 @@
-CampoSeguro v4.2.4
+CAMPOSEGURO v4.2.5 — LANDING PÚBLICA + PRUEBA GRATUITA
 
-Esta versión integra dos cosas antes de pagos con tarjeta:
+QUÉ SUBIR A GITHUB
+- app.py
+- config.py
+- db.py
+- monitor.py
+- emailer.py
+- auto_monitor.py
+- requirements.txt
+- runtime.txt
+- render.yaml
+- .env.example
+- README.md
+- LEEME_PRIMERO.txt
 
-1. Zonas sin duplicados:
-- El botón se bloquea al guardar.
-- Se evita crear copias por doble clic.
-- Hay botón para eliminar zona.
-- Hay limpieza de duplicadas.
+NO SUBIR
+- camposeguro.db
+- __pycache__
+- *.pyc
 
-2. Control de pago mensual:
-- Cada cliente tiene estado de pago.
-- Cada cliente puede tener fecha Pagado hasta.
-- Si la fecha vence, CampoSeguro suspende al cliente automáticamente.
-- No se borran sus zonas.
-- El cliente suspendido no recibe alertas ni correos y no accede al panel operativo.
-- El admin puede reactivar por 30 días.
+QUÉ CAMBIA
+- Ahora / funciona como landing pública cuando no hay sesión.
+- /planes muestra planes piloto.
+- /registro crea una cuenta de prueba gratuita de 5 días.
+- El cliente se crea con estado trial.
+- Si vence prueba o pago, el cliente se suspende automáticamente.
+- Las zonas no se eliminan por falta de pago.
+- El admin autenticado conserva su dashboard interno.
 
-Después de subir, probar:
-/healthz
-/usuarios
-/zonas
-/cliente
-/monitor
-/correos
-
-
-## v4.2.4 — prueba gratis 5 días + suspensión automática
-- Cliente nuevo puede iniciar con prueba gratuita de 5 días.
-- Si la prueba vence y no hay pago, el cliente pasa a SUSPENDIDO automáticamente.
-- Si el pago mensual vence, también se suspende automáticamente.
-- No se eliminan zonas ni radios: quedan guardados para reactivación.
-- El admin tiene botones: Prueba 5 días, Suspender y Reactivar 30 días.
-- El monitor y los correos ignoran clientes suspendidos o vencidos.
-- Esta versión prepara la integración futura con pasarela de pago por tarjeta.
+DESPUÉS DE SUBIR
+1. Render → Manual Deploy → Clear build cache & deploy.
+2. Probar /healthz.
+3. Abrir https://app.camposeguro.app en ventana incógnito.
+4. Debe verse la landing pública, no el dashboard privado.
+5. Probar /registro creando una cuenta de prueba.
+6. Verificar que entra a /cliente.
