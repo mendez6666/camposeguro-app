@@ -8,7 +8,7 @@ import re
 import threading
 import time
 import traceback
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -367,6 +367,8 @@ def ensure_payment_schema() -> None:
     """Migración suave para control comercial de pagos/suscripciones."""
     db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_status TEXT NOT NULL DEFAULT 'active'")
     db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS paid_until DATE")
+    db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_started_at DATE")
+    db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS trial_until DATE")
     db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_code TEXT DEFAULT 'piloto'")
     db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ")
     db.execute("UPDATE users SET subscription_status='active' WHERE subscription_status IS NULL OR subscription_status=''")
@@ -374,14 +376,20 @@ def ensure_payment_schema() -> None:
 
 
 def enforce_expired_subscriptions() -> int:
-    """Suspende clientes vencidos sin borrar sus zonas."""
+    """Suspende clientes con prueba vencida o pago vencido sin borrar sus zonas."""
     updated = db.execute("""
         UPDATE users
         SET subscription_status='suspended', suspended_at=now()
         WHERE active=TRUE AND role='client'
-          AND COALESCE(subscription_status,'active') IN ('active','trial','past_due')
-          AND paid_until IS NOT NULL
-          AND paid_until < CURRENT_DATE
+          AND (
+            (COALESCE(subscription_status,'active')='trial'
+             AND COALESCE(trial_until, paid_until) IS NOT NULL
+             AND COALESCE(trial_until, paid_until) < CURRENT_DATE)
+            OR
+            (COALESCE(subscription_status,'active') IN ('active','past_due')
+             AND paid_until IS NOT NULL
+             AND paid_until < CURRENT_DATE)
+          )
     """)
     db.execute("""
         DELETE FROM zone_alerts
@@ -419,31 +427,80 @@ def _date_value(value: Any):
         return None
 
 
+def trial_end_date(user: dict[str, Any]):
+    return _date_value(user.get("trial_until") or user.get("paid_until"))
+
+
+def paid_end_date(user: dict[str, Any]):
+    return _date_value(user.get("paid_until"))
+
+
+def days_until(d):
+    if not d:
+        return None
+    return (d - date.today()).days
+
+
 def user_subscription_active(user: dict[str, Any]) -> bool:
     if user.get("role") == "admin":
         return True
     status = str(user.get("subscription_status") or "active").lower()
-    if status not in {"active", "trial"}:
-        return False
-    paid_until = _date_value(user.get("paid_until"))
-    if paid_until is not None and paid_until < date.today():
-        return False
-    return True
+    if status == "trial":
+        end = trial_end_date(user)
+        return bool(end and end >= date.today())
+    if status == "active":
+        paid_until = paid_end_date(user)
+        # Si no hay vencimiento, se asume activo manual/piloto. Con pagos automáticos, paid_until se carga por webhook.
+        return paid_until is None or paid_until >= date.today()
+    return False
+
+
+def client_status_notice(user: dict[str, Any]) -> str:
+    """Mensaje simple para el cliente sobre prueba, pago o vencimiento."""
+    if user.get("role") == "admin":
+        return ""
+    status = str(user.get("subscription_status") or "active").lower()
+    if status == "trial":
+        end = trial_end_date(user)
+        left = days_until(end)
+        if left is None:
+            return "<div class='notice'><b>Prueba gratuita:</b> activa. Define una fecha de vencimiento para controlar la suspensión automática.</div>"
+        if left < 0:
+            return "<div class='error'><b>Prueba vencida.</b> Activa tu suscripción para recuperar el monitoreo.</div>"
+        if left == 0:
+            return "<div class='notice'><b>Tu prueba gratuita vence hoy.</b> Activa tu suscripción para no perder el acceso.</div>"
+        if left == 1:
+            return "<div class='notice'><b>Tu prueba gratuita vence mañana.</b> Activa tu suscripción para mantener alertas, reportes y monitoreo.</div>"
+        return f"<div class='notice'><b>Prueba gratuita:</b> te quedan {left} días. Activa tu suscripción para mantener alertas, reportes y monitoreo.</div>"
+    if status == "active":
+        end = paid_end_date(user)
+        left = days_until(end)
+        if left is not None and left <= 5:
+            return f"<div class='notice'><b>Tu suscripción vence en {max(left,0)} día(s).</b> Renueva para mantener el monitoreo sin interrupciones.</div>"
+    return ""
 
 
 def payment_badge(user: dict[str, Any]) -> str:
     status = str(user.get("subscription_status") or "active").lower()
-    paid_until = user.get("paid_until") or "sin vencimiento"
     label = {"active":"ACTIVO", "trial":"PRUEBA", "past_due":"VENCIDO", "suspended":"SUSPENDIDO", "canceled":"CANCELADO"}.get(status, status.upper())
-    css = "INFORMATIVO" if status in {"active", "trial"} else "CRITICO"
-    return f"<span class='badge {css}'>{esc(label)}</span><br><span class='small'>Vence: {esc(paid_until)}</span>"
+    css = "INFORMATIVO" if user_subscription_active(user) else "CRITICO"
+    if status == "trial":
+        end = trial_end_date(user)
+        left = days_until(end)
+        extra = f"Prueba hasta: {end or 'sin fecha'}"
+        if left is not None:
+            extra += f"<br>Días restantes: {max(left,0)}"
+    else:
+        end = paid_end_date(user)
+        extra = f"Vence: {end or 'sin vencimiento'}"
+    return f"<span class='badge {css}'>{esc(label)}</span><br><span class='small'>{extra}</span>"
 
 
 def suspended_client_response(user: dict[str, Any]) -> HTMLResponse:
     body = f"""
     <div class='card'>
       <h2>Acceso suspendido</h2>
-      <div class='error'>Tu suscripción de CampoSeguro está suspendida o vencida.</div>
+      <div class='error'>Tu prueba gratuita o suscripción de CampoSeguro está suspendida o vencida.</div>
       <p>Por seguridad comercial, tus zonas no se eliminan. Quedan guardadas y se reactivan cuando el pago se regularice.</p>
       <p><b>Estado:</b> {esc(user.get('subscription_status') or 'suspended')}<br><b>Vence:</b> {esc(user.get('paid_until') or 'sin fecha')}</p>
       <a class='btn primary' href='/logout'>Salir</a>
@@ -586,7 +643,7 @@ def cliente_inicio(request: Request):
     if not user_subscription_active(user):
         return suspended_client_response(user)
     stats = counts_for(user["id"])
-    body = """
+    body = client_status_notice(user) + """
     <div class='card'>
       <h2>Panel de seguimiento</h2>
       <p>Consulta tu mapa, ajusta radios de alerta, revisa alertas registradas y descarga un reporte operativo simple.</p>
@@ -1044,11 +1101,11 @@ def usuarios(request: Request):
     if isinstance(user, RedirectResponse): return user
     enforce_expired_subscriptions()
     rows = db.execute("SELECT u.*, (SELECT COUNT(*) FROM zones z WHERE z.user_id=u.id AND z.active=TRUE) AS zones_count FROM users u ORDER BY role,name", fetch="all") or []
-    body = "<div class='card'><h2>Usuarios y responsables</h2><a class='btn primary' href='/usuarios/nuevo'>Nuevo usuario</a><div class='notice'>No se eliminan zonas por falta de pago: el cliente se suspende y las zonas quedan guardadas para reactivación.</div><table><thead><tr><th>ID</th><th>Nombre</th><th>Correo</th><th>País</th><th>Rol</th><th>Zonas</th><th>Pago</th><th>Acceso</th><th>Acción</th></tr></thead><tbody>"
+    body = "<div class='card'><h2>Usuarios y responsables</h2><a class='btn primary' href='/usuarios/nuevo'>Nuevo usuario</a><div class='notice'>Prueba gratuita de 5 días y suspensión automática por vencimiento. No se eliminan zonas por falta de pago: las zonas quedan guardadas para reactivación.</div><table><thead><tr><th>ID</th><th>Nombre</th><th>Correo</th><th>País</th><th>Rol</th><th>Zonas</th><th>Pago</th><th>Acceso</th><th>Acción</th></tr></thead><tbody>"
     for r in rows:
         acceso = f"Correo: {r['email']}<br>Token: {str(r['client_token'])[:8]}..."
         if r['role'] == 'client':
-            pay_actions = f"<form method='post' action='/usuarios/{r['id']}/suspender' style='display:inline'><button class='btn danger' type='submit'>Suspender</button></form><form method='post' action='/usuarios/{r['id']}/reactivar' style='display:inline'><button class='btn primary' type='submit'>Reactivar 30 días</button></form>"
+            pay_actions = f"<form method='post' action='/usuarios/{r['id']}/prueba' style='display:inline'><button class='btn' type='submit'>Prueba 5 días</button></form><form method='post' action='/usuarios/{r['id']}/suspender' style='display:inline'><button class='btn danger' type='submit'>Suspender</button></form><form method='post' action='/usuarios/{r['id']}/reactivar' style='display:inline'><button class='btn primary' type='submit'>Reactivar 30 días</button></form>"
         else:
             pay_actions = ""
         body += f"<tr><td>{r['id']}</td><td>{esc(r['name'])}<br><span class='small'>{esc(r['organization'])}</span></td><td>{esc(r['email'])}</td><td>{esc(r.get('country',''))}</td><td>{esc(r['role'])}</td><td>{esc(r['zones_count'])}</td><td>{payment_badge(r)}</td><td>{acceso}</td><td><a class='btn' href='/usuarios/{r['id']}/editar'>Editar</a>{pay_actions}</td></tr>"
@@ -1066,9 +1123,10 @@ def usuario_nuevo(request: Request):
     <div><label>Correo</label><input type='email' name='email' required></div><div><label>Teléfono</label><input name='phone'></div>
     <div><label>País</label><select name='country'>{country_options()}</select></div>
     <div><label>Rol</label><select name='role'><option value='client'>Cliente</option><option value='admin'>Administrador</option></select></div>
-    <div><label>Estado de pago</label><select name='subscription_status'><option value='active'>Activo</option><option value='trial'>Prueba</option><option value='suspended'>Suspendido</option><option value='canceled'>Cancelado</option></select></div>
+    <div><label>Estado de pago</label><select name='subscription_status'><option value='trial' selected>Prueba gratuita 5 días</option><option value='active'>Activo pagado</option><option value='suspended'>Suspendido</option><option value='canceled'>Cancelado</option></select></div>
+    <div><label>Prueba hasta</label><input type='date' name='trial_until' value='{(date.today()+timedelta(days=config.FREE_TRIAL_DAYS)).isoformat()}'></div>
     <div><label>Pagado hasta</label><input type='date' name='paid_until'></div>
-    <div><label>Plan</label><input name='plan_code' value='piloto'></div>
+    <div><label>Plan</label><input name='plan_code' value='trial_5d'></div>
     <div><label>Contraseña inicial</label><input name='password' value='demo123'></div></div>
     <button class='btn primary' type='submit'>Crear usuario</button></form></div>
     """
@@ -1081,10 +1139,15 @@ async def usuario_nuevo_post(request: Request):
     if isinstance(user, RedirectResponse): return user
     form = await request.form()
     import secrets
+    status = str(form.get('subscription_status','trial')).lower()
+    trial_until = str(form.get('trial_until','')).strip()
+    paid_until = str(form.get('paid_until','')).strip()
+    if status == 'trial' and not trial_until:
+        trial_until = (date.today() + timedelta(days=config.FREE_TRIAL_DAYS)).isoformat()
     db.execute("""
-        INSERT INTO users(name, organization, email, phone, country, role, subscription_status, paid_until, plan_code, password_hash, client_token)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,NULLIF(%s,'')::date,%s,%s,%s)
-    """, (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('country', config.DEFAULT_COUNTRY)), str(form.get('role','client')), str(form.get('subscription_status','active')), str(form.get('paid_until','')), str(form.get('plan_code','piloto')), db.password_hash(str(form.get('password','demo123'))), secrets.token_urlsafe(24)))
+        INSERT INTO users(name, organization, email, phone, country, role, subscription_status, paid_until, trial_started_at, trial_until, plan_code, password_hash, client_token)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,NULLIF(%s,'')::date,CASE WHEN %s='trial' THEN CURRENT_DATE ELSE NULL END,NULLIF(%s,'')::date,%s,%s,%s)
+    """, (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('country', config.DEFAULT_COUNTRY)), str(form.get('role','client')), status, paid_until, status, trial_until, str(form.get('plan_code','trial_5d')), db.password_hash(str(form.get('password','demo123'))), secrets.token_urlsafe(24)))
     return RedirectResponse("/usuarios", status_code=303)
 
 
@@ -1100,11 +1163,12 @@ def usuario_editar(request: Request, user_id: int):
     <div><label>Correo</label><input type='email' name='email' value='{esc(r['email'])}' required></div><div><label>Teléfono</label><input name='phone' value='{esc(r['phone'])}'></div>
     <div><label>País</label><select name='country'>{country_options(r.get('country'))}</select></div>
     <div><label>Rol</label><select name='role'><option value='client' {'selected' if r['role']=='client' else ''}>Cliente</option><option value='admin' {'selected' if r['role']=='admin' else ''}>Administrador</option></select></div>
-    <div><label>Estado de pago</label><select name='subscription_status'><option value='active' {'selected' if (r.get('subscription_status') or 'active')=='active' else ''}>Activo</option><option value='trial' {'selected' if r.get('subscription_status')=='trial' else ''}>Prueba</option><option value='suspended' {'selected' if r.get('subscription_status')=='suspended' else ''}>Suspendido</option><option value='canceled' {'selected' if r.get('subscription_status')=='canceled' else ''}>Cancelado</option></select></div>
+    <div><label>Estado de pago</label><select name='subscription_status'><option value='active' {'selected' if (r.get('subscription_status') or 'active')=='active' else ''}>Activo pagado</option><option value='trial' {'selected' if r.get('subscription_status')=='trial' else ''}>Prueba gratuita</option><option value='suspended' {'selected' if r.get('subscription_status')=='suspended' else ''}>Suspendido</option><option value='canceled' {'selected' if r.get('subscription_status')=='canceled' else ''}>Cancelado</option></select></div>
+    <div><label>Prueba hasta</label><input type='date' name='trial_until' value='{esc(r.get('trial_until') or '')}'></div>
     <div><label>Pagado hasta</label><input type='date' name='paid_until' value='{esc(r.get('paid_until') or '')}'></div>
     <div><label>Plan</label><input name='plan_code' value='{esc(r.get('plan_code') or 'piloto')}'></div>
     <div><label>Nueva contraseña opcional</label><input name='password' placeholder='Dejar vacío para mantener'></div></div>
-    <div class='notice'><b>Token de acceso:</b> {esc(r['client_token'])}<br><b>Regla comercial:</b> si Pagado hasta vence, el cliente se suspende automáticamente; sus zonas no se borran.</div>
+    <div class='notice'><b>Token de acceso:</b> {esc(r['client_token'])}<br><b>Regla comercial:</b> si la prueba o el pago vence, el cliente se suspende automáticamente; sus zonas no se borran.</div>
     <button class='btn primary' type='submit'>Guardar</button></form></div>
     """
     return layout("Editar usuario", body, user)
@@ -1118,16 +1182,35 @@ async def usuario_editar_post(request: Request, user_id: int):
     password = str(form.get('password','')).strip()
     db.execute("""
         UPDATE users SET name=%s, organization=%s, email=%s, phone=%s, country=%s, role=%s,
-               subscription_status=%s, paid_until=NULLIF(%s,'')::date, plan_code=%s,
+               subscription_status=%s,
+               paid_until=NULLIF(%s,'')::date,
+               trial_started_at=CASE WHEN %s='trial' AND trial_started_at IS NULL THEN CURRENT_DATE ELSE trial_started_at END,
+               trial_until=NULLIF(%s,'')::date,
+               plan_code=%s,
                suspended_at=CASE WHEN %s='suspended' THEN COALESCE(suspended_at, now()) ELSE NULL END
         WHERE id=%s
-    """, (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('country', config.DEFAULT_COUNTRY)), str(form.get('role','client')), str(form.get('subscription_status','active')), str(form.get('paid_until','')), str(form.get('plan_code','piloto')), str(form.get('subscription_status','active')), user_id))
+    """, (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('country', config.DEFAULT_COUNTRY)), str(form.get('role','client')), str(form.get('subscription_status','active')), str(form.get('paid_until','')), str(form.get('subscription_status','active')), str(form.get('trial_until','')), str(form.get('plan_code','piloto')), str(form.get('subscription_status','active')), user_id))
     if password:
         db.execute("UPDATE users SET password_hash=%s WHERE id=%s", (db.password_hash(password), user_id))
     if str(form.get('subscription_status','active')) == 'suspended':
         db.execute("DELETE FROM zone_alerts WHERE user_id=%s", (user_id,))
     else:
         recalc_alerts_background("usuario-reactivado")
+    return RedirectResponse("/usuarios", status_code=303)
+
+
+@app.post("/usuarios/{user_id}/prueba")
+async def usuario_prueba(request: Request, user_id: int):
+    user = require_admin(request)
+    if isinstance(user, RedirectResponse): return user
+    trial_until = (date.today() + timedelta(days=config.FREE_TRIAL_DAYS)).isoformat()
+    db.execute("""
+        UPDATE users
+        SET subscription_status='trial', trial_started_at=CURRENT_DATE, trial_until=%s::date,
+            paid_until=NULL, plan_code='trial_5d', suspended_at=NULL
+        WHERE id=%s AND role='client'
+    """, (trial_until, user_id))
+    recalc_alerts_background("usuario-prueba-5-dias")
     return RedirectResponse("/usuarios", status_code=303)
 
 
@@ -1144,7 +1227,8 @@ async def usuario_suspender(request: Request, user_id: int):
 async def usuario_reactivar(request: Request, user_id: int):
     user = require_admin(request)
     if isinstance(user, RedirectResponse): return user
-    db.execute("UPDATE users SET subscription_status='active', paid_until=CURRENT_DATE + INTERVAL '30 days', suspended_at=NULL WHERE id=%s AND role='client'", (user_id,))
+    paid_until = (date.today() + timedelta(days=config.DEFAULT_PAID_DAYS)).isoformat()
+    db.execute("UPDATE users SET subscription_status='active', paid_until=%s::date, trial_started_at=NULL, trial_until=NULL, suspended_at=NULL, plan_code='mensual' WHERE id=%s AND role='client'", (paid_until, user_id))
     recalc_alerts_background("usuario-reactivado")
     return RedirectResponse("/usuarios", status_code=303)
 
@@ -1219,6 +1303,10 @@ async def cliente_zona_nueva_post(request: Request):
     try:
         lat, lon = lat_lon_from_form(form)
         zone_name = str(form.get('name','')).strip()
+        if str(user.get('subscription_status') or 'active').lower() == 'trial':
+            current_zones = db.execute("SELECT COUNT(*) AS n FROM zones WHERE user_id=%s AND active=TRUE", (int(user['id']),), fetch='value') or 0
+            if int(current_zones) >= config.TRIAL_MAX_ZONES:
+                raise ValueError(f"La prueba gratuita permite hasta {config.TRIAL_MAX_ZONES} zona(s). Activa la suscripción para registrar más zonas.")
         dupe = duplicate_zone(int(user['id']), zone_name, lat, lon)
         if dupe:
             raise ValueError(f"Zona duplicada: ya existe '{dupe['name']}' con coordenadas muy similares. No se creó otra copia.")

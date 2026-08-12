@@ -149,8 +149,10 @@ def recalc_alerts() -> int:
         FROM zones z
         JOIN users u ON u.id=z.user_id
         WHERE z.active=TRUE AND u.active=TRUE AND u.role='client'
-          AND COALESCE(u.subscription_status,'active') IN ('active','trial')
-          AND (u.paid_until IS NULL OR u.paid_until >= CURRENT_DATE)
+          AND (
+            (COALESCE(u.subscription_status,'active')='active' AND (u.paid_until IS NULL OR u.paid_until >= CURRENT_DATE))
+            OR (COALESCE(u.subscription_status,'active')='trial' AND COALESCE(u.trial_until, u.paid_until) >= CURRENT_DATE)
+          )
         ORDER BY z.user_id, z.name
         """,
         fetch="all",
@@ -215,8 +217,10 @@ def recalc_alerts() -> int:
 
 def user_alert_summary(user_id: int) -> dict[str, Any] | None:
     user = db.execute("""SELECT * FROM users WHERE id=%s AND active=TRUE
-        AND COALESCE(subscription_status,'active') IN ('active','trial')
-        AND (paid_until IS NULL OR paid_until >= CURRENT_DATE)""", (user_id,), fetch="one")
+        AND (
+          (COALESCE(subscription_status,'active')='active' AND (paid_until IS NULL OR paid_until >= CURRENT_DATE))
+          OR (COALESCE(subscription_status,'active')='trial' AND COALESCE(trial_until, paid_until) >= CURRENT_DATE)
+        )""", (user_id,), fetch="one")
     if not user:
         return None
     alerts = db.execute(
@@ -302,8 +306,10 @@ def queue_summary_emails() -> int:
         FROM users u
         JOIN zone_alerts a ON a.user_id=u.id
         WHERE u.active=TRUE AND u.role='client' AND a.active=TRUE
-          AND COALESCE(u.subscription_status,'active') IN ('active','trial')
-          AND (u.paid_until IS NULL OR u.paid_until >= CURRENT_DATE)
+          AND (
+            (COALESCE(u.subscription_status,'active')='active' AND (u.paid_until IS NULL OR u.paid_until >= CURRENT_DATE))
+            OR (COALESCE(u.subscription_status,'active')='trial' AND COALESCE(u.trial_until, u.paid_until) >= CURRENT_DATE)
+          )
         ORDER BY u.id
         """,
         fetch="all",
@@ -335,8 +341,10 @@ def queue_urgent_emails() -> int:
         JOIN zones z ON z.id=a.zone_id
         LEFT JOIN focos f ON f.id=a.nearest_foco_id
         WHERE a.active=TRUE AND a.level='CRITICO' AND u.active=TRUE
-          AND COALESCE(u.subscription_status,'active') IN ('active','trial')
-          AND (u.paid_until IS NULL OR u.paid_until >= CURRENT_DATE)
+          AND (
+            (COALESCE(u.subscription_status,'active')='active' AND (u.paid_until IS NULL OR u.paid_until >= CURRENT_DATE))
+            OR (COALESCE(u.subscription_status,'active')='trial' AND COALESCE(u.trial_until, u.paid_until) >= CURRENT_DATE)
+          )
         ORDER BY a.min_distance_km ASC
         """,
         fetch="all",

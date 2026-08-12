@@ -1,4 +1,4 @@
-# CampoSeguro v4.2.3 — Zonas sin duplicados + control de pagos
+# CampoSeguro v4.2.4 — Prueba gratis 5 días + suspensión automática
 
 Versión comercial regional para Sudamérica.
 
@@ -33,3 +33,13 @@ No subir:
 
 - camposeguro.db
 - __pycache__
+
+
+## v4.2.4 — prueba gratis 5 días + suspensión automática
+- Cliente nuevo puede iniciar con prueba gratuita de 5 días.
+- Si la prueba vence y no hay pago, el cliente pasa a SUSPENDIDO automáticamente.
+- Si el pago mensual vence, también se suspende automáticamente.
+- No se eliminan zonas ni radios: quedan guardados para reactivación.
+- El admin tiene botones: Prueba 5 días, Suspender y Reactivar 30 días.
+- El monitor y los correos ignoran clientes suspendidos o vencidos.
+- Esta versión prepara la integración futura con pasarela de pago por tarjeta.
