@@ -1,96 +1,45 @@
-# CampoSeguro v4.1 — Plataforma escalable
+# CampoSeguro v4.2 — Regionalización Sudamérica
 
-Versión preparada para pasar de prototipo a operación con múltiples clientes.
+Primera parte del paso comercial regional.
 
-## Concepto operativo
+## Qué cambia
 
-- **Focos FIRMS**: puntos satelitales descargados para el área operativa.
-- **Zona monitoreada**: punto o área de interés de un cliente con radio configurable.
-- **Zona con alerta**: zona que tiene uno o más focos dentro de su radio.
-- **Correo diario**: máximo un resumen diario por destinatario.
-- **Urgencia**: solo para nivel crítico, con enfriamiento configurable para no saturar al cliente.
+- Actualiza la versión a 4.2.
+- Cambia el enfoque textual de Bolivia a Sudamérica.
+- Cambia el BBOX FIRMS por defecto a Sudamérica continental: `-82.0,-56.0,-34.0,13.0`.
+- Agrega país a usuarios/clientes.
+- Agrega país a zonas monitoreadas.
+- Muestra país en usuarios, zonas, alertas, reportes y CSV.
+- Mantiene el portal cliente, radios, alertas, reportes y correos.
 
-## Arquitectura recomendada
+## Qué subir a GitHub
 
-```text
-NASA FIRMS
-   ↓
-Monitor automático / worker
-   ↓
-PostgreSQL
-   ↓
-Alertas agrupadas por zona y cliente
-   ↓
-Portal web + correos Resend
-```
+Subir estos archivos:
 
-## Variables principales en Render
+- `app.py`
+- `db.py`
+- `config.py`
+- `README.md`
+- `.env.example`
+
+No tocar variables de Render salvo que quieras fijar explícitamente:
 
 ```env
-DATABASE_URL=postgresql://...
-SESSION_SECRET=un-secreto-largo
-PUBLIC_BASE_URL=https://app.camposeguro.app
-
-ADMIN_EMAIL=tu_correo@dominio.com
-ADMIN_PASSWORD=Cambiar123!
-
-FIRMS_MAP_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-FIRMS_AREA_BBOX=-70.0,-23.5,-57.0,-9.0
-FIRMS_DAY_RANGE=5
-FIRMS_SOURCES=MODIS_NRT,VIIRS_SNPP_NRT,VIIRS_NOAA20_NRT,VIIRS_NOAA21_NRT
-
-EMAIL_ENABLED=true
-EMAIL_PROVIDER=resend_api
-RESEND_API_KEY=re_xxxxxxxxxxxxx
-EMAIL_FROM=CampoSeguro <alertas@camposeguro.app>
-EMAIL_REPLY_TO=tu_correo@dominio.com
-
-MONITOR_INTERVAL_MINUTES=180
-AUTO_MONITOR_ENABLED=true
-EMAIL_DAILY_MAX_PER_RECIPIENT=1
-EMAIL_URGENT_ENABLED=true
-EMAIL_URGENT_COOLDOWN_HOURS=12
+OPERATING_REGION=Sudamérica
+DEFAULT_COUNTRY=Bolivia
+SUPPORTED_COUNTRIES=Bolivia,Paraguay,Brasil,Perú,Argentina,Chile,Colombia,Ecuador,Uruguay,Venezuela,Guyana,Surinam
+FIRMS_AREA_BBOX=-82.0,-56.0,-34.0,13.0
 ```
 
-## Render
+## Prueba después del deploy
 
-Web service:
+1. `/healthz`
+2. `/`
+3. `/usuarios`
+4. `/zonas`
+5. `/mapa`
+6. `/cliente`
 
-```bash
-uvicorn app:app --host 0.0.0.0 --port $PORT
-```
+## Nota
 
-Worker recomendado cuando ya haya clientes pagos:
-
-```bash
-python auto_monitor.py
-```
-
-Cuando uses worker separado, deja en el web service:
-
-```env
-AUTO_MONITOR_ENABLED=false
-```
-
-y en el worker:
-
-```env
-AUTO_MONITOR_ENABLED=true
-```
-
-## Acceso
-
-Al iniciar, el sistema crea:
-
-- Un administrador con `ADMIN_EMAIL` y `ADMIN_PASSWORD`.
-- Un cliente piloto con `CLIENT_DEMO_EMAIL` y `CLIENT_DEMO_PASSWORD`.
-
-Cada cliente solo ve sus zonas, alertas y reporte.
-
-## Notas importantes
-
-- No subir `camposeguro.db` a GitHub.
-- No crear una variable `CLIENT_USER_ID` por cliente.
-- El radio se guarda por zona y recalcula alertas.
-- Las alertas son agrupadas: una zona puede tener muchos focos, pero genera una sola alerta operativa.
-- Los correos son anti-saturación: resumen diario y urgencias con enfriamiento.
+Esta versión NO integra pagos todavía. El siguiente paso será v4.3 con checkout web de Lemon Squeezy.

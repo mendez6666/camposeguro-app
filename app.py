@@ -73,25 +73,6 @@ pre { background:#111827; color:#f9fafb; padding:18px; border-radius:12px; overf
 .legend-item { display:flex; align-items:center; gap:6px; margin:4px 0; }
 .dot { width:11px; height:11px; border-radius:50%; display:inline-block; }
 .dot.red { background:#e03131; } .dot.orange { background:#ff7a1a; } .dot.blue { background:#2563eb; }
-.public-nav { background:#0b3d28; color:white; display:flex; gap:18px; padding:10px 32px; font-weight:700; font-size:14px; flex-wrap:wrap; align-items:center; }
-.public-nav .spacer { flex:1; }
-.public-nav a { opacity:.98; }
-.public-nav a:hover { text-decoration:underline; }
-.public-hero { background:linear-gradient(135deg,#07321f,#197641); color:white; border-radius:24px; padding:44px; display:grid; grid-template-columns:1.35fr .65fr; gap:28px; align-items:center; overflow:hidden; }
-.public-hero h2 { font-size:42px; margin:0 0 14px; line-height:1.08; }
-.public-hero p { font-size:18px; line-height:1.55; opacity:.95; max-width:760px; }
-.public-kicker { display:inline-block; font-size:13px; font-weight:900; letter-spacing:.08em; text-transform:uppercase; color:#c9f0d8; margin-bottom:12px; }
-.public-logo { width:100%; max-width:330px; max-height:250px; object-fit:contain; justify-self:center; }
-.public-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:22px; }
-.btn.public-light { background:white; color:#0f5132; }
-.btn.public-outline { background:transparent; color:white; border:1px solid rgba(255,255,255,.7); }
-.public-grid { display:grid; grid-template-columns:repeat(3,minmax(220px,1fr)); gap:18px; margin-top:20px; }
-.public-feature, .plan-card { background:white; border-radius:18px; box-shadow:0 6px 20px rgba(0,0,0,.06); padding:22px; }
-.public-feature h3, .plan-card h3 { margin:0 0 10px; color:#0f5132; }
-.plan-card strong { font-size:28px; color:#0f5132; }
-.demo-bar { background:#fff7ed; border-left:4px solid #ff7a1a; padding:12px 16px; border-radius:10px; margin:0 0 16px; }
-.auth-links { display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; }
-@media (max-width:900px) { .public-hero { grid-template-columns:1fr; padding:28px; } .public-hero h2 { font-size:34px; } .public-grid { grid-template-columns:1fr; } .public-nav { padding:10px 18px; } .public-logo { max-width:240px; } }
 @media (max-width:900px) { .grid { grid-template-columns:repeat(2,1fr); } .form-grid { grid-template-columns:1fr; } .nav { gap:12px; padding:10px 18px; } .page { padding:18px; } .header { padding:14px 18px; } .map-panel { top:145px; left:10px; max-width:170px; } .map-help { top:145px; right:10px; max-width:230px; } }
 @media print { .nav, .btn, .header { display:none !important; } body { background:white; } .card, .stat { box-shadow:none; border:1px solid #ddd; } }
 """
@@ -99,6 +80,12 @@ pre { background:#111827; color:#f9fafb; padding:18px; border-radius:12px; overf
 
 def esc(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
+
+
+def country_options(selected: str | None = None) -> str:
+    selected = (selected or config.DEFAULT_COUNTRY).strip()
+    countries = list(dict.fromkeys(config.SUPPORTED_COUNTRIES + [selected]))
+    return ''.join(f"<option value='{esc(c)}' {'selected' if c == selected else ''}>{esc(c)}</option>" for c in countries)
 
 
 def current_user(request: Request) -> dict[str, Any] | None:
@@ -124,16 +111,6 @@ def require_admin(request: Request) -> dict[str, Any] | RedirectResponse:
     return user
 
 
-def public_nav_html() -> str:
-    items = [
-        ("/", "Inicio"),
-        ("/demo", "Ver demostración"),
-        ("/registro", "Crear cuenta"),
-        ("/login", "Ingresar"),
-    ]
-    return '<div class="public-nav">' + ''.join(f'<a href="{esc(h)}">{esc(t)}</a>' for h, t in items) + '</div>'
-
-
 def nav_html(user: dict[str, Any] | None) -> str:
     if not user:
         return ""
@@ -153,7 +130,7 @@ def nav_html(user: dict[str, Any] | None) -> str:
 
 
 def layout(title: str, body: str, user: dict[str, Any] | None = None, page_class: str = "") -> HTMLResponse:
-    subtitle = "Vista cliente: seguimiento informativo de focos de calor" if user and user.get("role") == "client" else "Alerta temprana informativa de focos de calor para zonas registradas"
+    subtitle = "Vista cliente: seguimiento informativo de focos de calor" if user and user.get("role") == "client" else "Alerta temprana informativa de focos de calor para zonas registradas en Sudamérica"
     head = (
         "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<title>{esc(title)} | CampoSeguro</title><style>{CSS}</style></head><body>"
@@ -165,8 +142,7 @@ def layout(title: str, body: str, user: dict[str, Any] | None = None, page_class
         "</div></div>"
     )
     page_open = f"<main class='page {esc(page_class)}'>" if page_class != "map-page" else "<main class='map-page'>"
-    navigation = nav_html(user) if user else public_nav_html()
-    html_out = head + header + navigation + page_open + body + "</main></body></html>"
+    html_out = head + header + nav_html(user) + page_open + body + "</main></body></html>"
     return HTMLResponse(html_out)
 
 
@@ -235,22 +211,15 @@ def healthz():
 
 @app.get("/login")
 def login_get(request: Request):
-    if current_user(request):
-        user = current_user(request)
-        return RedirectResponse("/" if user and user["role"] == "admin" else "/cliente", status_code=303)
     body = """
     <div class="login-wrap card">
       <h2>Acceso CampoSeguro</h2>
-      <p class="small">Si ya tienes una cuenta, ingresa con tu correo y contraseña/token.</p>
+      <p class="small">Ingresa con tu correo y contraseña/token.</p>
       <form method="post" action="/login">
-        <label>Correo</label><input type="email" name="email" required autocomplete="email">
-        <label>Contraseña o token</label><input type="password" name="password" required autocomplete="current-password">
+        <label>Correo</label><input type="email" name="email" required>
+        <label>Contraseña o token</label><input type="password" name="password" required>
         <button class="btn primary" type="submit">Ingresar</button>
       </form>
-      <div class="auth-links">
-        <a class="btn" href="/registro">Crear cuenta</a>
-        <a class="btn" href="/demo">Ver demostración</a>
-      </div>
     </div>
     """
     return layout("Acceso", body, None)
@@ -278,70 +247,6 @@ async def login_post(request: Request):
 def logout(request: Request):
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
-
-
-@app.get("/registro")
-def registro_get(request: Request):
-    if current_user(request):
-        user = current_user(request)
-        return RedirectResponse("/" if user and user["role"] == "admin" else "/cliente", status_code=303)
-    body = """
-    <div class='login-wrap card'>
-      <h2>Crear cuenta CampoSeguro</h2>
-      <p>Registra una cuenta piloto. Después podrás registrar una primera zona de monitoreo.</p>
-      <form method='post' action='/registro'>
-        <label>Nombre completo</label><input name='name' required>
-        <label>Organización o propiedad (opcional)</label><input name='organization'>
-        <label>Correo de acceso</label><input type='email' name='email' required autocomplete='email'>
-        <label>Correo para alertas</label><input type='email' name='alert_email' placeholder='Puede ser el mismo correo'>
-        <label>Teléfono (opcional)</label><input name='phone'>
-        <label>Contraseña</label><input type='password' name='password' minlength='8' required autocomplete='new-password'>
-        <label>Repite la contraseña</label><input type='password' name='password2' minlength='8' required autocomplete='new-password'>
-        <button class='btn primary' type='submit'>Crear cuenta</button>
-      </form>
-      <div class='notice'>Registro piloto: una zona de monitoreo por cuenta. Los planes comerciales y pagos se habilitarán en una siguiente etapa.</div>
-      <div class='auth-links'><a class='btn' href='/login'>Ya tengo cuenta</a><a class='btn' href='/demo'>Ver demostración</a></div>
-    </div>
-    """
-    return layout("Crear cuenta", body, None)
-
-
-@app.post("/registro")
-async def registro_post(request: Request):
-    if current_user(request):
-        user = current_user(request)
-        return RedirectResponse("/" if user and user["role"] == "admin" else "/cliente", status_code=303)
-
-    form = await request.form()
-    name = str(form.get("name", "")).strip()
-    organization = str(form.get("organization", "")).strip()
-    email = str(form.get("email", "")).strip().lower()
-    alert_email = str(form.get("alert_email", "")).strip().lower() or email
-    phone = str(form.get("phone", "")).strip()
-    password = str(form.get("password", ""))
-    password2 = str(form.get("password2", ""))
-
-    if not name or not email or len(password) < 8 or password != password2:
-        body = "<div class='login-wrap card'><h2>No se pudo crear la cuenta</h2><p>Revisa los datos. La contraseña debe tener al menos 8 caracteres y ambas contraseñas deben coincidir.</p><a class='btn primary' href='/registro'>Volver</a></div>"
-        return layout("Registro", body, None)
-
-    existing = db.execute("SELECT id FROM users WHERE lower(email)=lower(%s)", (email,), fetch="one")
-    if existing:
-        body = "<div class='login-wrap card'><h2>Ese correo ya está registrado</h2><p>Ingresa con tu cuenta existente o utiliza otro correo.</p><a class='btn primary' href='/login'>Ingresar</a><a class='btn' href='/registro'>Volver</a></div>"
-        return layout("Registro", body, None)
-
-    import secrets
-    row = db.execute(
-        """
-        INSERT INTO users(name, organization, email, alert_email, phone, role, password_hash, client_token, active)
-        VALUES (%s,%s,%s,%s,%s,'client',%s,%s,TRUE)
-        RETURNING id
-        """,
-        (name, organization, email, alert_email, phone, db.password_hash(password), secrets.token_urlsafe(24)),
-        fetch="one",
-    )
-    request.session["user_id"] = int(row["id"])
-    return RedirectResponse("/cliente/zonas/nueva", status_code=303)
 
 
 def counts_for(user_id: int | None = None) -> dict[str, int]:
@@ -374,65 +279,17 @@ def stats_grid(stats: dict[str, int], client: bool = False) -> str:
 
 @app.get("/")
 def inicio(request: Request):
-    user = current_user(request)
-    if not user:
-        try:
-            stats = counts_for()
-        except Exception:
-            stats = {"users": 0, "zones": 0, "focos": 0, "alerts": 0, "critical": 0}
-        body = f"""
-        <section class='public-hero'>
-          <div>
-            <span class='public-kicker'>Alerta temprana para el territorio rural</span>
-            <h2>Convierte detecciones satelitales de fuego en alertas útiles para tu zona.</h2>
-            <p>CampoSeguro monitorea focos de calor cercanos a zonas registradas, calcula su distancia y prioriza el nivel de riesgo para facilitar decisiones preventivas.</p>
-            <div class='public-actions'>
-              <a class='btn public-light' href='/registro'>Crear cuenta</a>
-              <a class='btn public-outline' href='/demo'>Ver demostración</a>
-              <a class='btn public-outline' href='/login'>Ya tengo cuenta</a>
-            </div>
-          </div>
-          <img class='public-logo' src='{esc(config.LOGO_CAMPOSEGURO_URL)}' alt='CampoSeguro'>
-        </section>
-
-        <div class='public-grid'>
-          <div class='public-feature'><h3>1. Registra tu zona</h3><p>Define una ubicación y un radio de monitoreo para tu predio o área de interés.</p></div>
-          <div class='public-feature'><h3>2. CampoSeguro monitorea</h3><p>La plataforma consulta información satelital FIRMS y evalúa focos cercanos a la zona.</p></div>
-          <div class='public-feature'><h3>3. Recibe una alerta</h3><p>El riesgo se resume por zona y puede enviarse al correo configurado para el usuario.</p></div>
-        </div>
-
-        <div class='card' style='margin-top:20px'>
-          <h2>Plataforma piloto operativa</h2>
-          <p>La versión actual funciona inicialmente en Bolivia y está preparada para ampliar cobertura y usuarios.</p>
-          <div class='grid'>
-            <div class='stat'><div class='label'>Usuarios piloto</div><div class='num'>{esc(stats["users"])}</div></div>
-            <div class='stat'><div class='label'>Zonas activas</div><div class='num'>{esc(stats["zones"])}</div></div>
-            <div class='stat'><div class='label'>Focos almacenados</div><div class='num'>{esc(stats["focos"])}</div></div>
-            <div class='stat'><div class='label'>Zonas con alerta</div><div class='num'>{esc(stats["alerts"])}</div></div>
-          </div>
-          <div class='notice'>CampoSeguro es una herramienta informativa y no reemplaza sistemas oficiales de emergencia ni la verificación en campo.</div>
-        </div>
-
-        <div class='card'>
-          <h2>Acceso y planes</h2>
-          <div class='public-grid'>
-            <div class='plan-card'><h3>Demostración</h3><strong>Abierta</strong><p>Explora mapa, alertas y funcionamiento general sin modificar información.</p><a class='btn primary' href='/demo'>Ver demo</a></div>
-            <div class='plan-card'><h3>Registro piloto</h3><strong>1 zona</strong><p>Crea una cuenta y registra una zona de monitoreo para conocer la experiencia de usuario.</p><a class='btn primary' href='/registro'>Crear cuenta</a></div>
-            <div class='plan-card'><h3>Planes comerciales</h3><strong>Próxima etapa</strong><p>La activación de pagos y planes por número de zonas se incorporará después de la validación del piloto.</p></div>
-          </div>
-        </div>
-        """
-        return layout("Inicio", body, None)
-
+    user = require_login(request)
+    if isinstance(user, RedirectResponse):
+        return user
     if user["role"] == "client":
         return RedirectResponse("/cliente", status_code=303)
-
     stats = counts_for()
     state = db.all_state()
     body = f"""
     <div class='card'>
       <h2>Monitoreo de fuego cercano</h2>
-      <p>Registra usuarios y zonas de interés. CampoSeguro consulta FIRMS y prioriza alertas agrupadas por zona.</p>
+      <p>Registra clientes y zonas de interés en Sudamérica. CampoSeguro consulta FIRMS y prioriza alertas agrupadas por zona y radio configurado.</p>
       <a class='btn primary' href='/actualizar'>Actualizar monitoreo</a>
       <a class='btn' href='/mapa'>Ver mapa</a>
       <a class='btn' href='/usuarios'>Usuarios</a>
@@ -443,7 +300,7 @@ def inicio(request: Request):
       <div class='success'><b>Estado del sistema</b><br>
       Llave FIRMS: {'Configurada' if config.FIRMS_MAP_KEY else 'Pendiente'}<br>
       Región API: Sudamérica / South_America<br>
-      Área operativa: Bolivia<br>
+      Área operativa: Sudamérica<br>
       Evaluación de alertas: últimos {esc(config.FIRMS_DAY_RANGE)} días<br>
       Monitor automático: {'Activo' if config.AUTO_MONITOR_ENABLED else 'Desactivado'} / cada {esc(config.MONITOR_INTERVAL_MINUTES)} min<br>
       Base de datos: postgresql<br>
@@ -484,8 +341,7 @@ def cliente_inicio(request: Request):
       <h2>Panel de seguimiento</h2>
       <p>Consulta tu mapa, ajusta radios de alerta, revisa alertas registradas y descarga un reporte operativo simple.</p>
       <a class='btn primary' href='/cliente/mapa'>Ver mapa</a>
-      <a class='btn' href='/cliente/zonas'>Mis zonas</a>
-      <a class='btn' href='/cliente/zonas/nueva'>Registrar zona</a>
+      <a class='btn' href='/cliente/zonas'>Ajustar radios</a>
       <a class='btn' href='/cliente/alertas'>Ver alertas</a>
       <a class='btn' href='/cliente/reporte'>Ver reporte</a>
     </div>
@@ -604,7 +460,7 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
     return zones, focos, [dict(a) for a in alerts_raw]
 
 
-def map_page_html(user: dict[str, Any] | None, user_id: int | None = None) -> HTMLResponse:
+def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLResponse:
     map_error = ""
     try:
         zones, focos, alerts = map_data(user_id)
@@ -671,61 +527,6 @@ def map_page_html(user: dict[str, Any] | None, user_id: int | None = None) -> HT
     return layout("Mapa", map_error + panel + js, user, "map-page")
 
 
-def demo_alerts_cards(rows) -> str:
-    if not rows:
-        return "<div class='card'><p>No hay alertas activas en la demostración.</p></div>"
-    out = []
-    for a in rows[:8]:
-        google = "#"
-        if a.get("foco_lat") is not None and a.get("foco_lon") is not None:
-            google = f"https://www.google.com/maps?q={a['foco_lat']},{a['foco_lon']}"
-        out.append(f"""
-        <div class='card alert-card {esc(a['level'])}'>
-          <h2>{esc(a['zone_name'])} <span class='badge {esc(a['level'])}'>{esc(a['level'])}</span></h2>
-          <div class='grid'>
-            <div><b>Municipio</b><br>{esc(a.get('municipio'))}</div>
-            <div><b>Focos dentro del radio</b><br>{esc(a.get('foco_count'))}</div>
-            <div><b>Distancia mínima</b><br>{float(a.get('min_distance_km') or 0):.2f} km</div>
-            <div><b>Radio configurado</b><br>{float(a.get('radius_km') or 0):.1f} km</div>
-          </div>
-          <p class='notice'>{esc(a.get('message'))}</p>
-          <a class='btn primary' href='{esc(google)}' target='_blank'>Ver ubicación priorizada</a>
-        </div>
-        """)
-    return ''.join(out)
-
-
-@app.get("/demo")
-def demo(request: Request):
-    stats = counts_for()
-    body = f"""
-    <div class='demo-bar'><b>Modo demostración.</b> Vista pública de solo lectura. Los datos personales y las funciones administrativas están protegidos.</div>
-    <div class='card'>
-      <h2>Demostración CampoSeguro</h2>
-      <p>Explora cómo la plataforma convierte detecciones satelitales en información territorial por zona.</p>
-      <a class='btn primary' href='/demo/mapa'>Abrir mapa</a>
-      <a class='btn' href='/demo/alertas'>Ver alertas</a>
-      <a class='btn' href='/registro'>Crear cuenta piloto</a>
-    </div>
-    {stats_grid(stats)}
-    <div class='card'><h3>Distribución actual</h3>{alert_distribution_html()}<div class='notice'>CampoSeguro es informativo. No reemplaza sistemas oficiales ni la verificación en campo.</div></div>
-    """
-    return layout("Demostración", body, None)
-
-
-@app.get("/demo/mapa")
-def demo_mapa(request: Request):
-    return map_page_html(None, None)
-
-
-@app.get("/demo/alertas")
-def demo_alertas(request: Request):
-    body = "<div class='demo-bar'><b>Modo demostración.</b> Se ocultan nombres de usuarios, teléfonos y correos.</div>"
-    body += "<div class='card'><h2>Alertas de ejemplo en operación</h2><p>Alertas agrupadas por zona, prioridad y distancia mínima.</p></div>"
-    body += demo_alerts_cards(alerts_query())
-    return layout("Demo de alertas", body, None)
-
-
 @app.get("/mapa")
 def mapa(request: Request):
     user = require_admin(request)
@@ -779,14 +580,14 @@ def alerts_query(user_id: int | None = None):
     if user_id:
         return db.execute(
             """
-            SELECT a.*, z.name AS zone_name, z.municipio, z.radius_km, u.name AS user_name, u.phone, f.lat AS foco_lat, f.lon AS foco_lon, f.source, f.acq_date, f.acq_time
+            SELECT a.*, z.name AS zone_name, z.municipio, z.country, z.radius_km, u.name AS user_name, u.phone, f.lat AS foco_lat, f.lon AS foco_lon, f.source, f.acq_date, f.acq_time
             FROM zone_alerts a JOIN zones z ON z.id=a.zone_id JOIN users u ON u.id=a.user_id LEFT JOIN focos f ON f.id=a.nearest_foco_id
             WHERE a.user_id=%s AND a.active=TRUE
             ORDER BY CASE a.level WHEN 'CRITICO' THEN 3 WHEN 'ATENCION' THEN 2 ELSE 1 END DESC, a.min_distance_km ASC
             """, (user_id,), fetch="all") or []
     return db.execute(
         """
-        SELECT a.*, z.name AS zone_name, z.municipio, z.radius_km, u.name AS user_name, u.phone, f.lat AS foco_lat, f.lon AS foco_lon, f.source, f.acq_date, f.acq_time
+        SELECT a.*, z.name AS zone_name, z.municipio, z.country, z.radius_km, u.name AS user_name, u.phone, f.lat AS foco_lat, f.lon AS foco_lon, f.source, f.acq_date, f.acq_time
         FROM zone_alerts a JOIN zones z ON z.id=a.zone_id JOIN users u ON u.id=a.user_id LEFT JOIN focos f ON f.id=a.nearest_foco_id
         WHERE a.active=TRUE
         ORDER BY CASE a.level WHEN 'CRITICO' THEN 3 WHEN 'ATENCION' THEN 2 ELSE 1 END DESC, a.min_distance_km ASC
@@ -805,7 +606,7 @@ def alerts_cards(rows) -> str:
         <div class='card alert-card {esc(a['level'])}'>
           <h2>{esc(a['zone_name'])} <span class='badge {esc(a['level'])}'>{esc(a['level'])}</span></h2>
           <div class='grid'>
-            <div><b>Usuario</b><br>{esc(a.get('user_name'))}</div><div><b>Municipio</b><br>{esc(a.get('municipio'))}</div>
+            <div><b>Usuario</b><br>{esc(a.get('user_name'))}</div><div><b>Municipio / país</b><br>{esc(a.get('municipio'))} — {esc(a.get('country',''))}</div>
             <div><b>Focos dentro del radio</b><br>{esc(a.get('foco_count'))}</div><div><b>Distancia mínima</b><br>{float(a.get('min_distance_km') or 0):.2f} km</div>
             <div><b>Radio configurado</b><br>{float(a.get('radius_km') or 0):.1f} km</div><div><b>Fuente</b><br>{esc(a.get('source'))}</div>
             <div><b>Última detección</b><br>{esc(a.get('latest_detection'))}</div><div><b>Teléfono</b><br>{esc(a.get('phone'))}</div>
@@ -837,11 +638,11 @@ def cliente_alertas(request: Request):
 def zones_table(rows, client=False) -> str:
     if not rows:
         return "<p>No hay zonas registradas.</p>"
-    out = ["<table><thead><tr><th>Zona</th><th>Usuario</th><th>Municipio</th><th>Coordenadas</th><th>Radio actual</th><th>Nuevo radio</th></tr></thead><tbody>"]
+    out = ["<table><thead><tr><th>Zona</th><th>Usuario</th><th>País</th><th>Municipio</th><th>Coordenadas</th><th>Radio actual</th><th>Nuevo radio</th></tr></thead><tbody>"]
     action = "/cliente/zonas/radio" if client else "/zonas/radio"
     for z in rows:
         out.append(f"""
-        <tr><td><b>{esc(z['name'])}</b></td><td>{esc(z.get('user_name',''))}</td><td>{esc(z.get('municipio',''))}</td>
+        <tr><td><b>{esc(z['name'])}</b></td><td>{esc(z.get('user_name',''))}</td><td>{esc(z.get('country','Bolivia'))}</td><td>{esc(z.get('municipio',''))}</td>
         <td>{float(z['lat']):.5f}, {float(z['lon']):.5f}</td><td>{float(z['radius_km']):.1f} km</td>
         <td><form method='post' action='{action}' style='display:flex;gap:8px;align-items:center'>
         <input type='hidden' name='zone_id' value='{esc(z['id'])}'><select name='radius_km'>
@@ -867,88 +668,8 @@ def cliente_zonas(request: Request):
     if isinstance(user, RedirectResponse): return user
     if user["role"] == "admin": return RedirectResponse("/zonas", status_code=303)
     rows = db.execute("SELECT z.*, %s AS user_name FROM zones z WHERE z.user_id=%s ORDER BY z.name", (user["name"], user["id"]), fetch="all") or []
-    body = "<div class='card'><h2>Mis zonas</h2><p>Consulta y ajusta el radio de alerta de tus zonas.</p>"
-    if len(rows) == 0:
-        body += "<a class='btn primary' href='/cliente/zonas/nueva'>Registrar mi primera zona</a>"
-    else:
-        body += "<div class='notice'>El registro público piloto permite una primera zona. Las cuentas ya configuradas conservan todas sus zonas existentes.</div>"
-    body += "<div class='notice'>Recomendación inicial: 15 km. Para predios pequeños: 3 a 10 km. Para municipios o áreas grandes: 15 a 30 km.</div>" + zones_table(rows, client=True) + "</div>"
+    body = "<div class='card'><h2>Mis zonas</h2><p>Ajusta el radio de alerta de cada zona. Un radio más corto reduce alertas lejanas y evita saturar el correo.</p><div class='notice'>Recomendación inicial: 15 km. Para predios pequeños: 3 a 10 km. Para municipios o áreas grandes: 15 a 30 km.</div>" + zones_table(rows, client=True) + "</div>"
     return layout("Mis zonas", body, user)
-
-
-@app.get("/cliente/zonas/nueva")
-def cliente_zona_nueva(request: Request):
-    user = require_login(request)
-    if isinstance(user, RedirectResponse): return user
-    if user["role"] == "admin":
-        return RedirectResponse("/zonas/nueva", status_code=303)
-
-    count = int(db.execute("SELECT COUNT(*) AS n FROM zones WHERE user_id=%s", (user["id"],), fetch="one")["n"])
-    if count >= 1:
-        body = """
-        <div class='card'><h2>Tu cuenta ya tiene una zona o más</h2>
-        <p>La modalidad de auto-registro piloto habilita una primera zona. Tus zonas existentes continúan activas.</p>
-        <a class='btn primary' href='/cliente/zonas'>Ver mis zonas</a>
-        <a class='btn' href='/cliente/mapa'>Ver mapa</a></div>
-        """
-        return layout("Nueva zona", body, user)
-
-    body = f"""
-    <div class='card'><h2>Registrar mi zona de monitoreo</h2>
-    <p>Ingresa un punto representativo de tu predio o área de interés y define el radio de monitoreo.</p>
-    <form method='post' action='/cliente/zonas/nueva'>
-      <div class='form-grid'>
-        <div><label>Nombre de la zona</label><input name='name' placeholder='Ej. Predio El Tajibo' required></div>
-        <div><label>Municipio</label><input name='municipio' required></div>
-        <div><label>Latitud</label><input name='lat' placeholder='Ej. -17.7833' required></div>
-        <div><label>Longitud</label><input name='lon' placeholder='Ej. -63.1821' required></div>
-        <div><label>Radio de monitoreo</label>
-          <select name='radius_km'>
-            <option value='3'>3 km</option><option value='5'>5 km</option><option value='10'>10 km</option>
-            <option value='15' selected>15 km</option><option value='20'>20 km</option><option value='25'>25 km</option>
-            <option value='30'>30 km</option><option value='40'>40 km</option><option value='50'>50 km</option>
-          </select>
-        </div>
-      </div>
-      <button class='btn primary' type='submit'>Activar zona piloto</button>
-    </form>
-    <div class='notice'>La ubicación registrada se utiliza para evaluar la cercanía de focos de calor. No publiques coordenadas sensibles si no deseas utilizarlas en esta fase piloto.</div>
-    </div>
-    """
-    return layout("Nueva zona", body, user)
-
-
-@app.post("/cliente/zonas/nueva")
-async def cliente_zona_nueva_post(request: Request):
-    user = require_login(request)
-    if isinstance(user, RedirectResponse): return user
-    if user["role"] == "admin":
-        return RedirectResponse("/zonas/nueva", status_code=303)
-
-    count = int(db.execute("SELECT COUNT(*) AS n FROM zones WHERE user_id=%s", (user["id"],), fetch="one")["n"])
-    if count >= 1:
-        return RedirectResponse("/cliente/zonas", status_code=303)
-
-    form = await request.form()
-    name = str(form.get("name", "")).strip()
-    municipio = str(form.get("municipio", "")).strip()
-    lat = _to_float(form.get("lat"))
-    lon = _to_float(form.get("lon"))
-    radius = _to_float(form.get("radius_km"), 15.0)
-
-    if not name or not municipio or not _valid_latlon(lat, lon) or radius not in [3,5,10,15,20,25,30,40,50]:
-        body = "<div class='card'><h2>No se pudo registrar la zona</h2><p>Revisa el nombre, municipio, coordenadas y radio.</p><a class='btn primary' href='/cliente/zonas/nueva'>Volver</a></div>"
-        return layout("Nueva zona", body, user)
-
-    db.execute(
-        "INSERT INTO zones(user_id,name,municipio,lat,lon,radius_km,active) VALUES (%s,%s,%s,%s,%s,%s,TRUE)",
-        (user["id"], name, municipio, lat, lon, radius),
-    )
-    try:
-        monitor.recalc_alerts()
-    except Exception as exc:
-        print("CampoSeguro self-service recalc warning:", repr(exc), flush=True)
-    return RedirectResponse("/cliente", status_code=303)
 
 
 async def update_zone_radius(request: Request, client: bool):
@@ -981,10 +702,10 @@ def usuarios(request: Request):
     user = require_admin(request)
     if isinstance(user, RedirectResponse): return user
     rows = db.execute("SELECT u.*, (SELECT COUNT(*) FROM zones z WHERE z.user_id=u.id) AS zones_count FROM users u ORDER BY role,name", fetch="all") or []
-    body = "<div class='card'><h2>Usuarios y responsables</h2><a class='btn primary' href='/usuarios/nuevo'>Nuevo usuario</a><div class='notice'>Cada cliente ingresa con su correo y contraseña/token. Ya no se usa CLIENT_USER_ID para separar clientes.</div><table><thead><tr><th>ID</th><th>Nombre</th><th>Correo</th><th>Rol</th><th>Zonas</th><th>Acceso</th><th>Acción</th></tr></thead><tbody>"
+    body = "<div class='card'><h2>Usuarios y responsables</h2><a class='btn primary' href='/usuarios/nuevo'>Nuevo usuario</a><div class='notice'>Cada cliente ingresa con su correo y contraseña/token. Ya no se usa CLIENT_USER_ID para separar clientes.</div><table><thead><tr><th>ID</th><th>Nombre</th><th>Correo</th><th>País</th><th>Rol</th><th>Zonas</th><th>Acceso</th><th>Acción</th></tr></thead><tbody>"
     for r in rows:
         acceso = f"Correo: {r['email']}<br>Token: {str(r['client_token'])[:8]}..."
-        body += f"<tr><td>{r['id']}</td><td>{esc(r['name'])}<br><span class='small'>{esc(r['organization'])}</span></td><td>{esc(r['email'])}</td><td>{esc(r['role'])}</td><td>{esc(r['zones_count'])}</td><td>{acceso}</td><td><a class='btn' href='/usuarios/{r['id']}/editar'>Editar</a></td></tr>"
+        body += f"<tr><td>{r['id']}</td><td>{esc(r['name'])}<br><span class='small'>{esc(r['organization'])}</span></td><td>{esc(r['email'])}</td><td>{esc(r.get('country',''))}</td><td>{esc(r['role'])}</td><td>{esc(r['zones_count'])}</td><td>{acceso}</td><td><a class='btn' href='/usuarios/{r['id']}/editar'>Editar</a></td></tr>"
     body += "</tbody></table></div>"
     return layout("Usuarios", body, user)
 
@@ -993,10 +714,11 @@ def usuarios(request: Request):
 def usuario_nuevo(request: Request):
     user = require_admin(request)
     if isinstance(user, RedirectResponse): return user
-    body = """
+    body = f"""
     <div class='card'><h2>Nuevo usuario</h2><form method='post' action='/usuarios/nuevo'>
     <div class='form-grid'><div><label>Nombre</label><input name='name' required></div><div><label>Organización</label><input name='organization'></div>
     <div><label>Correo</label><input type='email' name='email' required></div><div><label>Teléfono</label><input name='phone'></div>
+    <div><label>País</label><select name='country'>{country_options()}</select></div>
     <div><label>Rol</label><select name='role'><option value='client'>Cliente</option><option value='admin'>Administrador</option></select></div>
     <div><label>Contraseña inicial</label><input name='password' value='demo123'></div></div>
     <button class='btn primary' type='submit'>Crear usuario</button></form></div>
@@ -1011,9 +733,9 @@ async def usuario_nuevo_post(request: Request):
     form = await request.form()
     import secrets
     db.execute("""
-        INSERT INTO users(name, organization, email, phone, role, password_hash, client_token)
-        VALUES (%s,%s,%s,%s,%s,%s,%s)
-    """, (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('role','client')), db.password_hash(str(form.get('password','demo123'))), secrets.token_urlsafe(24)))
+        INSERT INTO users(name, organization, email, phone, country, role, password_hash, client_token)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+    """, (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('country', config.DEFAULT_COUNTRY)), str(form.get('role','client')), db.password_hash(str(form.get('password','demo123'))), secrets.token_urlsafe(24)))
     return RedirectResponse("/usuarios", status_code=303)
 
 
@@ -1027,6 +749,7 @@ def usuario_editar(request: Request, user_id: int):
     <div class='card'><h2>Editar usuario</h2><form method='post' action='/usuarios/{user_id}/editar'>
     <div class='form-grid'><div><label>Nombre</label><input name='name' value='{esc(r['name'])}' required></div><div><label>Organización</label><input name='organization' value='{esc(r['organization'])}'></div>
     <div><label>Correo</label><input type='email' name='email' value='{esc(r['email'])}' required></div><div><label>Teléfono</label><input name='phone' value='{esc(r['phone'])}'></div>
+    <div><label>País</label><select name='country'>{country_options(r.get('country'))}</select></div>
     <div><label>Rol</label><select name='role'><option value='client' {'selected' if r['role']=='client' else ''}>Cliente</option><option value='admin' {'selected' if r['role']=='admin' else ''}>Administrador</option></select></div>
     <div><label>Nueva contraseña opcional</label><input name='password' placeholder='Dejar vacío para mantener'></div></div>
     <div class='notice'><b>Token de acceso:</b> {esc(r['client_token'])}</div>
@@ -1041,7 +764,7 @@ async def usuario_editar_post(request: Request, user_id: int):
     if isinstance(user, RedirectResponse): return user
     form = await request.form()
     password = str(form.get('password','')).strip()
-    db.execute("UPDATE users SET name=%s, organization=%s, email=%s, phone=%s, role=%s WHERE id=%s", (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('role','client')), user_id))
+    db.execute("UPDATE users SET name=%s, organization=%s, email=%s, phone=%s, country=%s, role=%s WHERE id=%s", (str(form.get('name','')), str(form.get('organization','')), str(form.get('email','')).lower(), str(form.get('phone','')), str(form.get('country', config.DEFAULT_COUNTRY)), str(form.get('role','client')), user_id))
     if password:
         db.execute("UPDATE users SET password_hash=%s WHERE id=%s", (db.password_hash(password), user_id))
     return RedirectResponse("/usuarios", status_code=303)
@@ -1056,7 +779,7 @@ def zona_nueva(request: Request):
     body = f"""
     <div class='card'><h2>Nueva zona</h2><form method='post' action='/zonas/nueva'>
     <div class='form-grid'><div><label>Usuario</label><select name='user_id'>{opts}</select></div><div><label>Nombre de zona</label><input name='name' required></div>
-    <div><label>Municipio</label><input name='municipio'></div><div><label>Radio km</label><input name='radius_km' value='{config.DEFAULT_ZONE_RADIUS_KM}'></div>
+    <div><label>País</label><select name='country'>{country_options()}</select></div><div><label>Municipio</label><input name='municipio'></div><div><label>Radio km</label><input name='radius_km' value='{config.DEFAULT_ZONE_RADIUS_KM}'></div>
     <div><label>Latitud</label><input name='lat' required></div><div><label>Longitud</label><input name='lon' required></div></div>
     <button class='btn primary' type='submit'>Crear zona</button></form></div>
     """
@@ -1068,7 +791,7 @@ async def zona_nueva_post(request: Request):
     user = require_admin(request)
     if isinstance(user, RedirectResponse): return user
     form = await request.form()
-    db.execute("INSERT INTO zones(user_id,name,municipio,lat,lon,radius_km) VALUES (%s,%s,%s,%s,%s,%s)", (int(form.get('user_id')), str(form.get('name','')), str(form.get('municipio','')), float(form.get('lat')), float(form.get('lon')), float(form.get('radius_km'))))
+    db.execute("INSERT INTO zones(user_id,name,municipio,country,lat,lon,radius_km) VALUES (%s,%s,%s,%s,%s,%s,%s)", (int(form.get('user_id')), str(form.get('name','')), str(form.get('municipio','')), str(form.get('country', config.DEFAULT_COUNTRY)), float(form.get('lat')), float(form.get('lon')), float(form.get('radius_km'))))
     monitor.recalc_alerts()
     return RedirectResponse("/zonas", status_code=303)
 
@@ -1076,13 +799,13 @@ async def zona_nueva_post(request: Request):
 def report_rows(user_id: int | None = None):
     if user_id:
         return db.execute("""
-            SELECT z.name AS zone_name, z.municipio, u.name AS user_name, COALESCE(a.foco_count,0) AS foco_count,
+            SELECT z.name AS zone_name, z.municipio, z.country, u.name AS user_name, COALESCE(a.foco_count,0) AS foco_count,
                    COALESCE(a.level,'SIN ALERTA') AS level, a.min_distance_km, a.latest_detection
             FROM zones z JOIN users u ON u.id=z.user_id LEFT JOIN zone_alerts a ON a.zone_id=z.id
             WHERE z.user_id=%s AND z.active=TRUE ORDER BY CASE COALESCE(a.level,'') WHEN 'CRITICO' THEN 3 WHEN 'ATENCION' THEN 2 WHEN 'INFORMATIVO' THEN 1 ELSE 0 END DESC, a.min_distance_km ASC NULLS LAST, z.name
         """, (user_id,), fetch="all") or []
     return db.execute("""
-        SELECT z.name AS zone_name, z.municipio, u.name AS user_name, COALESCE(a.foco_count,0) AS foco_count,
+        SELECT z.name AS zone_name, z.municipio, z.country, u.name AS user_name, COALESCE(a.foco_count,0) AS foco_count,
                COALESCE(a.level,'SIN ALERTA') AS level, a.min_distance_km, a.latest_detection
         FROM zones z JOIN users u ON u.id=z.user_id LEFT JOIN zone_alerts a ON a.zone_id=z.id
         WHERE z.active=TRUE ORDER BY CASE COALESCE(a.level,'') WHEN 'CRITICO' THEN 3 WHEN 'ATENCION' THEN 2 WHEN 'INFORMATIVO' THEN 1 ELSE 0 END DESC, a.min_distance_km ASC NULLS LAST, u.name,z.name
@@ -1097,12 +820,12 @@ def report_html(user: dict[str, Any], user_id: int | None = None) -> HTMLRespons
     <div class='card'><h2>Reporte operativo CampoSeguro</h2><p>Monitoreo informativo de focos de calor cercanos a zonas registradas.</p>
     <button class='btn primary' onclick='window.print()'>Imprimir / Guardar PDF</button><a class='btn' href='{csv_url}'>Exportar alertas CSV</a><a class='btn' href='/mapa'>Ver mapa</a></div>
     {stats_grid(stats, client=bool(user_id))}
-    <div class='card'><h3>Resumen por zona</h3><table><thead><tr><th>Zona</th><th>Usuario</th><th>Municipio</th><th>Focos dentro del radio</th><th>Nivel máximo</th><th>Distancia mínima</th><th>Última detección</th></tr></thead><tbody>
+    <div class='card'><h3>Resumen por zona</h3><table><thead><tr><th>Zona</th><th>Usuario</th><th>País</th><th>Municipio</th><th>Focos dentro del radio</th><th>Nivel máximo</th><th>Distancia mínima</th><th>Última detección</th></tr></thead><tbody>
     """
     for r in rows:
         level = r["level"] if r["level"] != "SIN ALERTA" else "INFORMATIVO"
         dist = "" if r.get("min_distance_km") is None else f"{float(r['min_distance_km']):.2f} km"
-        body += f"<tr><td>{esc(r['zone_name'])}</td><td>{esc(r['user_name'])}</td><td>{esc(r['municipio'])}</td><td>{esc(r['foco_count'])}</td><td><span class='badge {esc(level)}'>{esc(r['level'])}</span></td><td>{esc(dist)}</td><td>{esc(r.get('latest_detection',''))}</td></tr>"
+        body += f"<tr><td>{esc(r['zone_name'])}</td><td>{esc(r['user_name'])}</td><td>{esc(r.get('country',''))}</td><td>{esc(r['municipio'])}</td><td>{esc(r['foco_count'])}</td><td><span class='badge {esc(level)}'>{esc(r['level'])}</span></td><td>{esc(dist)}</td><td>{esc(r.get('latest_detection',''))}</td></tr>"
     body += "</tbody></table><div class='notice'>CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales de emergencia.</div></div>"
     return layout("Reporte", body, user)
 
@@ -1125,9 +848,9 @@ def cliente_reporte(request: Request):
 def csv_response(rows, filename: str):
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow(["zona", "usuario", "municipio", "focos_dentro_radio", "nivel", "distancia_minima_km", "ultima_deteccion"])
+    writer.writerow(["zona", "usuario", "pais", "municipio", "focos_dentro_radio", "nivel", "distancia_minima_km", "ultima_deteccion"])
     for r in rows:
-        writer.writerow([r["zone_name"], r["user_name"], r["municipio"], r["foco_count"], r["level"], r.get("min_distance_km") or "", r.get("latest_detection") or ""])
+        writer.writerow([r["zone_name"], r["user_name"], r.get("country", ""), r["municipio"], r["foco_count"], r["level"], r.get("min_distance_km") or "", r.get("latest_detection") or ""])
     data = out.getvalue().encode("utf-8-sig")
     return StreamingResponse(io.BytesIO(data), media_type="text/csv", headers={"Content-Disposition": f"attachment; filename={filename}"})
 
@@ -1156,7 +879,7 @@ def resumen(request: Request):
         if int(r["foco_count"]) <= 0:
             continue
         lvl = r["level"]
-        body += f"<tr><td>{esc(r['zone_name'])}</td><td>{esc(r['user_name'])}</td><td>{esc(r['municipio'])}</td><td>{esc(r['foco_count'])}</td><td><span class='badge {esc(lvl)}'>{esc(lvl)}</span></td><td>{float(r['min_distance_km']):.2f} km</td></tr>"
+        body += f"<tr><td>{esc(r['zone_name'])}</td><td>{esc(r['user_name'])}</td><td>{esc(r.get('country',''))}</td><td>{esc(r['municipio'])}</td><td>{esc(r['foco_count'])}</td><td><span class='badge {esc(lvl)}'>{esc(lvl)}</span></td><td>{float(r['min_distance_km']):.2f} km</td></tr>"
     body += "</tbody></table></div>"
     return layout("Resumen", body, user)
 

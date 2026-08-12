@@ -76,6 +76,7 @@ def init_db() -> None:
             organization TEXT DEFAULT '',
             email TEXT UNIQUE NOT NULL,
             phone TEXT DEFAULT '',
+            country TEXT DEFAULT 'Bolivia',
             role TEXT NOT NULL DEFAULT 'client',
             password_hash TEXT DEFAULT '',
             client_token TEXT UNIQUE NOT NULL,
@@ -89,6 +90,7 @@ def init_db() -> None:
             user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             municipio TEXT DEFAULT '',
+            country TEXT DEFAULT 'Bolivia',
             lat DOUBLE PRECISION NOT NULL,
             lon DOUBLE PRECISION NOT NULL,
             radius_km DOUBLE PRECISION NOT NULL DEFAULT 15,
@@ -156,6 +158,8 @@ def init_db() -> None:
         # Migraciones suaves para repositorios que ya tenían tablas anteriores.
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS organization TEXT DEFAULT '';",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT DEFAULT '';",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS country TEXT DEFAULT 'Bolivia';",
+        "UPDATE users SET country='Bolivia' WHERE country IS NULL OR country='';",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'client';",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT DEFAULT '';",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS client_token TEXT;",
@@ -165,6 +169,8 @@ def init_db() -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_client_token_unique ON users(client_token);",
         "ALTER TABLE zones ADD COLUMN IF NOT EXISTS user_id INTEGER;",
         "ALTER TABLE zones ADD COLUMN IF NOT EXISTS municipio TEXT DEFAULT '';",
+        "ALTER TABLE zones ADD COLUMN IF NOT EXISTS country TEXT DEFAULT 'Bolivia';",
+        "UPDATE zones SET country='Bolivia' WHERE country IS NULL OR country='';",
         "ALTER TABLE zones ADD COLUMN IF NOT EXISTS radius_km DOUBLE PRECISION NOT NULL DEFAULT 15;",
         "ALTER TABLE zones ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;",
         "ALTER TABLE focos ADD COLUMN IF NOT EXISTS external_id TEXT;",
@@ -306,14 +312,15 @@ def seed_data() -> None:
     if not admin:
         execute(
             """
-            INSERT INTO users(name, organization, email, phone, role, password_hash, client_token)
-            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            INSERT INTO users(name, organization, email, phone, country, role, password_hash, client_token)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
                 "Administrador CampoSeguro",
                 "CampoSeguro",
                 config.ADMIN_EMAIL,
                 "",
+                config.DEFAULT_COUNTRY,
                 "admin",
                 password_hash(config.ADMIN_PASSWORD),
                 secrets.token_urlsafe(24),
@@ -329,8 +336,8 @@ def seed_data() -> None:
     if not client:
         client = execute(
             """
-            INSERT INTO users(name, organization, email, phone, role, password_hash, client_token)
-            VALUES (%s,%s,%s,%s,%s,%s,%s)
+            INSERT INTO users(name, organization, email, phone, country, role, password_hash, client_token)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id
             """,
             (
@@ -338,6 +345,7 @@ def seed_data() -> None:
                 "CampoSeguro",
                 config.CLIENT_DEMO_EMAIL,
                 config.CLIENT_DEMO_PHONE,
+                config.DEFAULT_COUNTRY,
                 "client",
                 password_hash(config.CLIENT_DEMO_PASSWORD),
                 secrets.token_urlsafe(24),
@@ -348,15 +356,15 @@ def seed_data() -> None:
     existing_zones = execute("SELECT COUNT(*) AS n FROM zones WHERE user_id=%s", (client_id,), fetch="one")
     if int(existing_zones["n"]) == 0:
         seed_zones = [
-            (client_id, "Santa Cruz de la Sierra", "Santa Cruz de la Sierra", -17.7833, -63.1821, config.DEFAULT_ZONE_RADIUS_KM),
-            (client_id, "San Ignacio de Velasco", "San Ignacio de Velasco", -16.3667, -60.9500, config.DEFAULT_ZONE_RADIUS_KM),
-            (client_id, "Roboré", "Roboré", -18.3333, -59.7500, config.DEFAULT_ZONE_RADIUS_KM),
-            (client_id, "San Matías", "San Matías", -16.3667, -58.4000, config.DEFAULT_ZONE_RADIUS_KM),
-            (client_id, "Puerto Suárez", "Puerto Suárez", -18.9500, -57.8000, config.DEFAULT_ZONE_RADIUS_KM),
-            (client_id, "Charagua Iyambae", "Charagua Iyambae", -19.8000, -63.2000, config.DEFAULT_ZONE_RADIUS_KM),
+            (client_id, "Santa Cruz de la Sierra", "Santa Cruz de la Sierra", config.DEFAULT_COUNTRY, -17.7833, -63.1821, config.DEFAULT_ZONE_RADIUS_KM),
+            (client_id, "San Ignacio de Velasco", "San Ignacio de Velasco", config.DEFAULT_COUNTRY, -16.3667, -60.9500, config.DEFAULT_ZONE_RADIUS_KM),
+            (client_id, "Roboré", "Roboré", config.DEFAULT_COUNTRY, -18.3333, -59.7500, config.DEFAULT_ZONE_RADIUS_KM),
+            (client_id, "San Matías", "San Matías", config.DEFAULT_COUNTRY, -16.3667, -58.4000, config.DEFAULT_ZONE_RADIUS_KM),
+            (client_id, "Puerto Suárez", "Puerto Suárez", config.DEFAULT_COUNTRY, -18.9500, -57.8000, config.DEFAULT_ZONE_RADIUS_KM),
+            (client_id, "Charagua Iyambae", "Charagua Iyambae", config.DEFAULT_COUNTRY, -19.8000, -63.2000, config.DEFAULT_ZONE_RADIUS_KM),
         ]
         executemany(
-            "INSERT INTO zones(user_id, name, municipio, lat, lon, radius_km) VALUES (%s,%s,%s,%s,%s,%s)",
+            "INSERT INTO zones(user_id, name, municipio, country, lat, lon, radius_km) VALUES (%s,%s,%s,%s,%s,%s,%s)",
             seed_zones,
         )
 

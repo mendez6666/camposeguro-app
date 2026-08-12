@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 APP_NAME = "CampoSeguro"
-APP_VERSION = "4.1"
+APP_VERSION = "4.2"
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -55,7 +55,7 @@ LOGO_CAMPOSEGURO_URL = os.getenv(
 
 RAW_FIRMS_MAP_KEY = os.getenv("FIRMS_MAP_KEY", "").strip()
 FIRMS_MAP_KEY = normalize_firms_key(RAW_FIRMS_MAP_KEY)
-FIRMS_AREA_BBOX = os.getenv("FIRMS_AREA_BBOX", "-70.0,-23.5,-57.0,-9.0").strip()
+FIRMS_AREA_BBOX = os.getenv("FIRMS_AREA_BBOX", "-82.0,-56.0,-34.0,13.0").strip()
 FIRMS_SOURCES = [s.strip() for s in os.getenv(
     "FIRMS_SOURCES",
     "MODIS_NRT,VIIRS_SNPP_NRT,VIIRS_NOAA20_NRT,VIIRS_NOAA21_NRT",
@@ -90,3 +90,11 @@ CLIENT_DEMO_PASSWORD = os.getenv("CLIENT_DEMO_PASSWORD", "demo123")
 CLIENT_DEMO_PHONE = os.getenv("CLIENT_DEMO_PHONE", "+59178061775").strip()
 
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://app.camposeguro.app").rstrip("/")
+
+# Regionalización comercial
+OPERATING_REGION = os.getenv("OPERATING_REGION", "Sudamérica").strip()
+DEFAULT_COUNTRY = os.getenv("DEFAULT_COUNTRY", "Bolivia").strip()
+SUPPORTED_COUNTRIES = [c.strip() for c in os.getenv(
+    "SUPPORTED_COUNTRIES",
+    "Bolivia,Paraguay,Brasil,Perú,Argentina,Chile,Colombia,Ecuador,Uruguay,Venezuela,Guyana,Surinam"
+).split(",") if c.strip()]
