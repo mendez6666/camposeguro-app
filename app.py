@@ -4,6 +4,7 @@ import csv
 import html
 import io
 import json
+import re
 import threading
 import time
 import traceback
@@ -86,6 +87,87 @@ def country_options(selected: str | None = None) -> str:
     selected = (selected or config.DEFAULT_COUNTRY).strip()
     countries = list(dict.fromkeys(config.SUPPORTED_COUNTRIES + [selected]))
     return ''.join(f"<option value='{esc(c)}' {'selected' if c == selected else ''}>{esc(c)}</option>" for c in countries)
+
+
+COUNTRY_BBOX = {
+    # west, south, east, north. BBOX aproximadas para visualización regional.
+    "Todos": None,
+    "Bolivia": (-70.0, -23.5, -57.0, -9.0),
+    "Paraguay": (-63.0, -27.7, -54.0, -19.0),
+    "Brasil": (-74.0, -34.0, -34.0, 6.0),
+    "Perú": (-82.0, -19.0, -68.0, 1.0),
+    "Argentina": (-74.0, -56.0, -53.0, -21.0),
+    "Chile": (-76.0, -56.5, -66.0, -17.0),
+    "Colombia": (-80.0, -5.0, -66.0, 13.0),
+    "Ecuador": (-82.0, -6.0, -75.0, 2.0),
+    "Uruguay": (-59.0, -35.5, -53.0, -30.0),
+    "Venezuela": (-74.0, 0.0, -59.0, 13.0),
+    "Guyana": (-62.0, 1.0, -56.0, 9.0),
+    "Surinam": (-59.0, 1.0, -53.0, 7.0),
+}
+
+
+def country_filter_options(selected: str | None = None) -> str:
+    selected = (selected or "Todos").strip()
+    countries = ["Todos"] + list(dict.fromkeys(config.SUPPORTED_COUNTRIES))
+    if selected not in countries:
+        countries.append(selected)
+    return ''.join(f"<option value='{esc(c)}' {'selected' if c == selected else ''}>{esc(c)}</option>" for c in countries)
+
+
+def parse_coordinates_text(text: str) -> tuple[float | None, float | None]:
+    """Extrae coordenadas desde Google Maps, texto libre o formato lat,lon."""
+    text = (text or "").strip()
+    if not text:
+        return None, None
+    patterns = [
+        r"@\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",      # https://maps.google.com/@lat,lon,zoom
+        r"[?&](?:q|ll|query)=\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",  # ?q=lat,lon
+        r"(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",             # lat, lon
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, text)
+        if m:
+            lat = _to_float(m.group(1))
+            lon = _to_float(m.group(2))
+            if _valid_latlon(lat, lon):
+                return lat, lon
+    return None, None
+
+
+def zone_location_widget(prefix: str = "") -> str:
+    """Bloque de ayuda para cargar una zona desde GPS, Google Maps o coordenadas."""
+    return """
+    <div class='notice'>
+      <b>Cómo registrar el punto:</b> puedes pegar un enlace de Google Maps, escribir coordenadas manuales o usar la ubicación actual del celular/computadora. Si estás en la finca sin internet, guarda las coordenadas con el GPS del celular y cárgalas después cuando tengas conexión.
+    </div>
+    <label>Enlace de Google Maps o coordenadas</label>
+    <textarea name='coords_text' rows='3' placeholder='Ejemplos: -17.7833, -63.1821  |  https://maps.google.com/?q=-17.7833,-63.1821'></textarea>
+    <button class='btn' type='button' onclick='usarMiUbicacion()'>Usar mi ubicación actual</button>
+    <script>
+    function usarMiUbicacion(){
+      if(!navigator.geolocation){ alert('Este navegador no permite leer ubicación GPS.'); return; }
+      navigator.geolocation.getCurrentPosition(function(pos){
+        const lat = pos.coords.latitude.toFixed(6);
+        const lon = pos.coords.longitude.toFixed(6);
+        const latInput = document.querySelector('input[name="lat"]');
+        const lonInput = document.querySelector('input[name="lon"]');
+        if(latInput) latInput.value = lat;
+        if(lonInput) lonInput.value = lon;
+      }, function(){ alert('No se pudo obtener ubicación. Puedes pegar coordenadas o enlace de Google Maps.'); }, {enableHighAccuracy:true, timeout:12000});
+    }
+    </script>
+    """
+
+
+def lat_lon_from_form(form) -> tuple[float, float]:
+    lat = _to_float(form.get('lat'))
+    lon = _to_float(form.get('lon'))
+    if not _valid_latlon(lat, lon):
+        lat, lon = parse_coordinates_text(str(form.get('coords_text','')))
+    if not _valid_latlon(lat, lon):
+        raise ValueError("Coordenadas inválidas. Ingresa latitud/longitud o pega un enlace válido de Google Maps.")
+    return float(lat), float(lon)
 
 
 def current_user(request: Request) -> dict[str, Any] | None:
@@ -363,7 +445,7 @@ def _valid_latlon(lat: float | None, lon: float | None) -> bool:
     return lat is not None and lon is not None and -90 <= lat <= 90 and -180 <= lon <= 180
 
 
-def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+def map_data(user_id: int | None = None, country_filter: str | None = None) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     # Mapa tolerante a migraciones: si alguna tabla vieja tiene columnas raras,
     # no debe tumbar toda la app. El error queda impreso en Render Logs.
     if user_id:
@@ -376,15 +458,26 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
             """,
             (user_id,), fetch="all") or []
     else:
-        zones_raw = db.execute(
-            """
-            SELECT z.*, u.name AS user_name, a.level, a.foco_count, a.min_distance_km
-            FROM zones z JOIN users u ON u.id=z.user_id
-            LEFT JOIN zone_alerts a ON a.zone_id=z.id
-            WHERE z.active=TRUE
-            ORDER BY u.name, z.name
-            """,
-            fetch="all") or []
+        if country_filter and country_filter != "Todos":
+            zones_raw = db.execute(
+                """
+                SELECT z.*, u.name AS user_name, a.level, a.foco_count, a.min_distance_km
+                FROM zones z JOIN users u ON u.id=z.user_id
+                LEFT JOIN zone_alerts a ON a.zone_id=z.id
+                WHERE z.active=TRUE AND z.country=%s
+                ORDER BY u.name, z.name
+                """,
+                (country_filter,), fetch="all") or []
+        else:
+            zones_raw = db.execute(
+                """
+                SELECT z.*, u.name AS user_name, a.level, a.foco_count, a.min_distance_km
+                FROM zones z JOIN users u ON u.id=z.user_id
+                LEFT JOIN zone_alerts a ON a.zone_id=z.id
+                WHERE z.active=TRUE
+                ORDER BY u.name, z.name
+                """,
+                fetch="all") or []
 
     zones: list[dict[str, Any]] = []
     for zrow in zones_raw:
@@ -405,14 +498,27 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
         # Importante: versiones anteriores guardaban coordenadas como
         # latitude/longitude o latitud/longitud. No filtramos por lat/lon
         # porque esas columnas pueden existir pero estar vacías después de migrar.
-        focos_raw = db.execute(
-            """
-            SELECT *
-            FROM focos
-            ORDER BY id DESC
-            LIMIT 6000
-            """,
-            fetch="all") or []
+        bbox = None if user_id else COUNTRY_BBOX.get(country_filter or "Todos")
+        if bbox:
+            west, south, east, north = bbox
+            focos_raw = db.execute(
+                """
+                SELECT *
+                FROM focos
+                WHERE lat BETWEEN %s AND %s AND lon BETWEEN %s AND %s
+                ORDER BY id DESC
+                LIMIT 6000
+                """,
+                (south, north, west, east), fetch="all") or []
+        else:
+            focos_raw = db.execute(
+                """
+                SELECT *
+                FROM focos
+                ORDER BY id DESC
+                LIMIT 6000
+                """,
+                fetch="all") or []
     except Exception as exc:
         print("CampoSeguro map focos query error:", repr(exc), flush=True)
         print(traceback.format_exc(), flush=True)
@@ -460,10 +566,13 @@ def map_data(user_id: int | None = None) -> tuple[list[dict[str, Any]], list[dic
     return zones, focos, [dict(a) for a in alerts_raw]
 
 
-def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLResponse:
+def map_page_html(request: Request, user: dict[str, Any], user_id: int | None = None) -> HTMLResponse:
     map_error = ""
+    country_filter = request.query_params.get("pais") or (user.get("country") if user_id else "Todos")
+    if country_filter not in COUNTRY_BBOX and country_filter != "Todos":
+        country_filter = "Todos"
     try:
-        zones, focos, alerts = map_data(user_id)
+        zones, focos, alerts = map_data(user_id, country_filter)
     except Exception as exc:
         trace = traceback.format_exc()
         print("CampoSeguro map_page_html error:", repr(exc), flush=True)
@@ -471,18 +580,27 @@ def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLRespo
         zones, focos, alerts = [], [], []
         map_error = "<div class='error' style='position:absolute;z-index:999;left:20px;right:20px;top:20px'>No se pudo cargar la información del mapa. Revisa Render Logs.</div>"
     title_text = "Vista cliente" if user_id else "CampoSeguro"
+    country_form = ""
+    if not user_id:
+        country_form = f"""
+        <form method='get' action='/mapa' style='margin:8px 0 10px'>
+          <label style='margin:0 0 5px'>País / vista regional</label>
+          <select name='pais' onchange='this.form.submit()'>{country_filter_options(country_filter)}</select>
+        </form>
+        """
     panel = f"""
     <div class='map-panel'>
       <b>CampoSeguro</b><br>{esc(title_text)}<br>
-      Zonas: {len(zones)}<br>Focos FIRMS: {len(focos)}<br>Zonas con alerta: {len(alerts)}
+      País/vista: {esc(country_filter)}<br>
+      Zonas: {len(zones)}<br>Focos visualizados: {len(focos)}<br>Zonas con alerta: {len(alerts)}
       <hr>
       <div class='legend-item'><span class='dot blue'></span>Zona monitoreada</div>
       <div class='legend-item'><span class='dot orange'></span>Foco MODIS</div>
       <div class='legend-item'><span class='dot red'></span>Foco VIIRS</div>
       <button class='btn' style='padding:8px 12px;margin-top:8px' onclick='showAll()'>Todo</button>
     </div>
-    <div class='map-help'><b>Vista del mapa</b><div class='map-tabs'><button onclick='showZones()'>Zonas</button><button onclick='showFocos()'>Focos</button><button onclick='showAll()'>Todo</button></div>
-    <p class='small'>Las alertas se calculan por zona según el radio configurado. Los puntos FIRMS son contexto satelital.</p></div>
+    <div class='map-help'><b>Vista del mapa</b>{country_form}<div class='map-tabs'><button onclick='showZones()'>Zonas</button><button onclick='showFocos()'>Focos</button><button onclick='showAll()'>Todo</button></div>
+    <p class='small'>El mapa limita los puntos visibles para mantener velocidad. Las alertas se calculan por zona según el radio configurado.</p></div>
     <div id='map'></div>
     """
     js = """
@@ -518,7 +636,7 @@ def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLRespo
       m.addTo(focoLayer);
       focoBounds.push([lat,lon]);
     });
-    if(bounds.length){ map.fitBounds(bounds, {padding:[60,60]}); }
+    if(bounds.length){ map.fitBounds(bounds, {padding:[60,60]}); } else if(focoBounds.length){ map.fitBounds(focoBounds, {padding:[40,40]}); }
     function showZones(){ if(!map.hasLayer(zoneLayer)) map.addLayer(zoneLayer); if(map.hasLayer(focoLayer)) map.removeLayer(focoLayer); if(bounds.length){ map.fitBounds(bounds, {padding:[60,60]}); } }
     function showFocos(){ if(map.hasLayer(zoneLayer)) map.removeLayer(zoneLayer); if(!map.hasLayer(focoLayer)) map.addLayer(focoLayer); if(focoBounds.length){ map.fitBounds(focoBounds, {padding:[40,40]}); } }
     function showAll(){ if(!map.hasLayer(zoneLayer)) map.addLayer(zoneLayer); if(!map.hasLayer(focoLayer)) map.addLayer(focoLayer); const allBounds = bounds.concat(focoBounds); if(allBounds.length){ map.fitBounds(allBounds, {padding:[40,40]}); } }
@@ -531,7 +649,7 @@ def map_page_html(user: dict[str, Any], user_id: int | None = None) -> HTMLRespo
 def mapa(request: Request):
     user = require_admin(request)
     if isinstance(user, RedirectResponse): return user
-    return map_page_html(user, None)
+    return map_page_html(request, user, None)
 
 
 @app.get("/cliente/mapa")
@@ -539,7 +657,7 @@ def cliente_mapa(request: Request):
     user = require_login(request)
     if isinstance(user, RedirectResponse): return user
     if user["role"] == "admin": return RedirectResponse("/mapa", status_code=303)
-    return map_page_html(user, user["id"])
+    return map_page_html(request, user, user["id"])
 
 
 @app.get("/actualizar")
@@ -668,7 +786,7 @@ def cliente_zonas(request: Request):
     if isinstance(user, RedirectResponse): return user
     if user["role"] == "admin": return RedirectResponse("/zonas", status_code=303)
     rows = db.execute("SELECT z.*, %s AS user_name FROM zones z WHERE z.user_id=%s ORDER BY z.name", (user["name"], user["id"]), fetch="all") or []
-    body = "<div class='card'><h2>Mis zonas</h2><p>Ajusta el radio de alerta de cada zona. Un radio más corto reduce alertas lejanas y evita saturar el correo.</p><div class='notice'>Recomendación inicial: 15 km. Para predios pequeños: 3 a 10 km. Para municipios o áreas grandes: 15 a 30 km.</div>" + zones_table(rows, client=True) + "</div>"
+    body = "<div class='card'><h2>Mis zonas</h2><p>Ajusta el radio de alerta de cada zona. Un radio más corto reduce alertas lejanas y evita saturar el correo.</p><a class='btn primary' href='/cliente/zonas/nueva'>Agregar nueva zona</a><div class='notice'>Recomendación inicial: 15 km. Para predios pequeños: 3 a 10 km. Para municipios o áreas grandes: 15 a 30 km.</div>" + zones_table(rows, client=True) + "</div>"
     return layout("Mis zonas", body, user)
 
 
@@ -779,8 +897,9 @@ def zona_nueva(request: Request):
     body = f"""
     <div class='card'><h2>Nueva zona</h2><form method='post' action='/zonas/nueva'>
     <div class='form-grid'><div><label>Usuario</label><select name='user_id'>{opts}</select></div><div><label>Nombre de zona</label><input name='name' required></div>
-    <div><label>País</label><select name='country'>{country_options()}</select></div><div><label>Municipio</label><input name='municipio'></div><div><label>Radio km</label><input name='radius_km' value='{config.DEFAULT_ZONE_RADIUS_KM}'></div>
-    <div><label>Latitud</label><input name='lat' required></div><div><label>Longitud</label><input name='lon' required></div></div>
+    <div><label>País</label><select name='country'>{country_options()}</select></div><div><label>Municipio / localidad</label><input name='municipio'></div><div><label>Radio km</label><input name='radius_km' value='{config.DEFAULT_ZONE_RADIUS_KM}'></div>
+    <div><label>Latitud</label><input name='lat' placeholder='Ej. -17.7833'></div><div><label>Longitud</label><input name='lon' placeholder='Ej. -63.1821'></div></div>
+    {zone_location_widget()}
     <button class='btn primary' type='submit'>Crear zona</button></form></div>
     """
     return layout("Nueva zona", body, user)
@@ -791,9 +910,55 @@ async def zona_nueva_post(request: Request):
     user = require_admin(request)
     if isinstance(user, RedirectResponse): return user
     form = await request.form()
-    db.execute("INSERT INTO zones(user_id,name,municipio,country,lat,lon,radius_km) VALUES (%s,%s,%s,%s,%s,%s,%s)", (int(form.get('user_id')), str(form.get('name','')), str(form.get('municipio','')), str(form.get('country', config.DEFAULT_COUNTRY)), float(form.get('lat')), float(form.get('lon')), float(form.get('radius_km'))))
-    monitor.recalc_alerts()
-    return RedirectResponse("/zonas", status_code=303)
+    try:
+        lat, lon = lat_lon_from_form(form)
+        db.execute("INSERT INTO zones(user_id,name,municipio,country,lat,lon,radius_km) VALUES (%s,%s,%s,%s,%s,%s,%s)", (int(form.get('user_id')), str(form.get('name','')), str(form.get('municipio','')), str(form.get('country', config.DEFAULT_COUNTRY)), lat, lon, float(form.get('radius_km') or config.DEFAULT_ZONE_RADIUS_KM)))
+        monitor.recalc_alerts()
+        return RedirectResponse("/zonas", status_code=303)
+    except Exception as exc:
+        return layout("Nueva zona", f"<div class='card'><h2>No se pudo crear la zona</h2><div class='error'>{esc(exc)}</div><a class='btn primary' href='/zonas/nueva'>Volver</a></div>", user)
+
+
+@app.get("/cliente/zonas/nueva")
+def cliente_zona_nueva(request: Request):
+    user = require_login(request)
+    if isinstance(user, RedirectResponse): return user
+    if user["role"] == "admin": return RedirectResponse("/zonas/nueva", status_code=303)
+    body = f"""
+    <div class='card'><h2>Agregar nueva zona</h2>
+    <p>Registra el punto central de tu predio, comunidad, finca o zona de interés.</p>
+    <form method='post' action='/cliente/zonas/nueva'>
+    <div class='form-grid'><div><label>Nombre de zona</label><input name='name' placeholder='Ej. Finca El Carmen' required></div>
+    <div><label>País</label><select name='country'>{country_options(user.get('country'))}</select></div>
+    <div><label>Municipio / localidad</label><input name='municipio'></div>
+    <div><label>Radio km</label><select name='radius_km'>{''.join(f"<option value='{r}' {'selected' if r==15 else ''}>{r} km</option>" for r in [3,5,10,15,20,25,30,40,50])}</select></div>
+    <div><label>Latitud</label><input name='lat' placeholder='Ej. -17.7833'></div>
+    <div><label>Longitud</label><input name='lon' placeholder='Ej. -63.1821'></div></div>
+    {zone_location_widget()}
+    <button class='btn primary' type='submit'>Guardar zona</button>
+    <a class='btn' href='/cliente/zonas'>Cancelar</a>
+    </form></div>
+    """
+    return layout("Agregar zona", body, user)
+
+
+@app.post("/cliente/zonas/nueva")
+async def cliente_zona_nueva_post(request: Request):
+    user = require_login(request)
+    if isinstance(user, RedirectResponse): return user
+    if user["role"] == "admin": return RedirectResponse("/zonas/nueva", status_code=303)
+    form = await request.form()
+    try:
+        lat, lon = lat_lon_from_form(form)
+        db.execute(
+            "INSERT INTO zones(user_id,name,municipio,country,lat,lon,radius_km) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (int(user['id']), str(form.get('name','')), str(form.get('municipio','')), str(form.get('country', user.get('country') or config.DEFAULT_COUNTRY)), lat, lon, float(form.get('radius_km') or config.DEFAULT_ZONE_RADIUS_KM))
+        )
+        monitor.recalc_alerts()
+        return RedirectResponse("/cliente/zonas", status_code=303)
+    except Exception as exc:
+        body = f"<div class='card'><h2>No se pudo crear la zona</h2><div class='error'>{esc(exc)}</div><a class='btn primary' href='/cliente/zonas/nueva'>Volver</a></div>"
+        return layout("Agregar zona", body, user)
 
 
 def report_rows(user_id: int | None = None):

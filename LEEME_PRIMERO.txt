@@ -1,44 +1,23 @@
-CAMPOSEGURO v4.1 — ESCALABLE
+CampoSeguro v4.2.1
 
-Esta versión corrige la base para pensar en cientos de clientes:
+Esta versión agrega:
+- filtro por país en el mapa regional;
+- carga de zonas por GPS, coordenadas o enlace de Google Maps;
+- creación de nuevas zonas desde el portal cliente.
 
-1. Multiusuario real.
-   Ya no se usa CLIENT_USER_ID por cliente. Cada usuario tiene correo, contraseña/token y sus propias zonas.
+NO subir:
+- camposeguro.db
+- __pycache__
+- archivos .pyc
 
-2. PostgreSQL obligatorio.
-   No subas camposeguro.db a GitHub. La base debe vivir en Render Postgres, Supabase, Neon u otro PostgreSQL.
-
-3. Alertas agrupadas por zona.
-   Si una zona tiene muchos focos dentro del radio, CampoSeguro cuenta una zona con alerta, con foco_count y distancia mínima.
-
-4. Correo anti-saturación.
-   El sistema prepara máximo un resumen diario por destinatario y urgencias críticas con enfriamiento configurable.
-
-5. Monitor automático.
-   En piloto puede correr dentro del web service. En producción conviene usar un background worker separado: python auto_monitor.py
-
-Archivos principales a subir a GitHub:
+Subir recomendado:
 - app.py
-- db.py
 - config.py
-- monitor.py
-- emailer.py
-- auto_monitor.py
-- requirements.txt
-- runtime.txt
-- render.yaml
-- .gitignore
-- .env.example
 - README.md
 
-Variables mínimas en Render:
-- DATABASE_URL
-- SESSION_SECRET
-- ADMIN_EMAIL
-- ADMIN_PASSWORD
-- FIRMS_MAP_KEY
-- RESEND_API_KEY
-- EMAIL_ENABLED=true
-- EMAIL_PROVIDER=resend_api
-- EMAIL_FROM=CampoSeguro <alertas@camposeguro.app>
-- PUBLIC_BASE_URL=https://app.camposeguro.app
+Después de desplegar en Render, probar:
+/healthz
+/mapa
+/zonas
+/cliente/zonas
+/cliente/zonas/nueva
