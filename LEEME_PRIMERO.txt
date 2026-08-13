@@ -1,37 +1,22 @@
-CAMPOSEGURO v4.2.5 — LANDING PÚBLICA + PRUEBA GRATUITA
+CampoSeguro v4.2.6 — landing profesional
 
-QUÉ SUBIR A GITHUB
-- app.py
-- config.py
-- db.py
-- monitor.py
-- emailer.py
-- auto_monitor.py
-- requirements.txt
-- runtime.txt
-- render.yaml
-- .env.example
-- README.md
-- LEEME_PRIMERO.txt
+1) Subir a GitHub:
+   - app.py
+   - config.py
+   - README.md
+   - LEEME_PRIMERO.txt
 
-NO SUBIR
-- camposeguro.db
-- __pycache__
-- *.pyc
+2) No subir:
+   - camposeguro.db
+   - __pycache__
+   - archivos .pyc
 
-QUÉ CAMBIA
-- Ahora / funciona como landing pública cuando no hay sesión.
-- /planes muestra planes piloto.
-- /registro crea una cuenta de prueba gratuita de 5 días.
-- El cliente se crea con estado trial.
-- Si vence prueba o pago, el cliente se suspende automáticamente.
-- Las zonas no se eliminan por falta de pago.
-- El admin autenticado conserva su dashboard interno.
+3) En Render no cambiar variables.
 
-DESPUÉS DE SUBIR
-1. Render → Manual Deploy → Clear build cache & deploy.
-2. Probar /healthz.
-3. Abrir https://app.camposeguro.app en ventana incógnito.
-4. Debe verse la landing pública, no el dashboard privado.
-5. Probar /registro creando una cuenta de prueba.
-6. Verificar que entra a /cliente.
+4) Deploy: Manual Deploy -> Clear build cache & deploy.
+
+5) Probar:
+   /healthz
+   /
+   /planes
+   /registro

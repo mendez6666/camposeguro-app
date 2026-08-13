@@ -91,9 +91,26 @@ pre { background:#111827; color:#f9fafb; padding:18px; border-radius:12px; overf
 .steps { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:14px; }
 .step { background:#f8fafc; border-radius:14px; padding:16px; border:1px solid #e5e7eb; }
 .step b { display:block; margin-bottom:6px; color:#0f5132; }
-.hero-map { background:linear-gradient(140deg,#e8f5ee,#ffffff); border:1px solid #dcebe3; border-radius:22px; padding:22px; }
-.hero-map .mini-map { height:260px; border-radius:18px; background:radial-gradient(circle at 32% 45%, rgba(239,68,68,.9) 0 4px, transparent 5px),radial-gradient(circle at 45% 38%, rgba(239,68,68,.9) 0 5px, transparent 6px),radial-gradient(circle at 62% 52%, rgba(249,115,22,.95) 0 6px, transparent 7px),radial-gradient(circle at 52% 62%, rgba(37,99,235,.85) 0 6px, transparent 7px),linear-gradient(135deg,#dcfce7,#bfdbfe); position:relative; overflow:hidden; }
-.hero-map .mini-map:after { content:'Sudamérica'; position:absolute; right:18px; bottom:14px; color:#0f5132; font-weight:900; opacity:.75; }
+.hero-map { background:linear-gradient(145deg,#f4fbf6,#e6f5ec); border:1px solid #d8eadf; border-radius:22px; padding:24px; position:relative; overflow:hidden; box-shadow:0 14px 34px rgba(15,81,50,.14); min-height:360px; }
+.hero-map:before { content:''; position:absolute; inset:-40px; background:radial-gradient(circle at 78% 42%, rgba(255,122,26,.16), transparent 18%),radial-gradient(circle at 72% 68%, rgba(255,122,26,.13), transparent 15%),linear-gradient(120deg, rgba(255,255,255,.6), rgba(255,255,255,0)); pointer-events:none; }
+.hero-map > * { position:relative; z-index:1; }
+.hero-map-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:14px; }
+.hero-map-head h3 { font-size:24px; margin:0 0 8px; }
+.hero-brand { display:flex; align-items:center; gap:8px; font-weight:900; color:#0f5132; white-space:nowrap; }
+.hero-brand img { width:44px; height:34px; object-fit:contain; }
+.hero-brand span span { color:#ff7a1a; }
+.hero-visual-grid { display:grid; grid-template-columns:1.05fr .95fr; gap:16px; align-items:center; }
+.hero-features { display:grid; gap:13px; }
+.hero-feature { display:grid; grid-template-columns:42px 1fr; gap:12px; align-items:start; padding:10px 0; border-bottom:1px solid rgba(15,81,50,.12); }
+.hero-feature:last-child { border-bottom:0; }
+.hero-icon { width:42px; height:42px; border-radius:50%; background:#0f5132; color:white; display:flex; align-items:center; justify-content:center; font-size:20px; box-shadow:0 8px 20px rgba(15,81,50,.18); }
+.hero-feature b { display:block; color:#17212b; margin-bottom:4px; }
+.hero-feature .small { line-height:1.45; }
+.southamerica-card { min-height:250px; border-radius:18px; background:linear-gradient(145deg,rgba(15,81,50,.14),rgba(255,255,255,.42)); border:1px solid rgba(15,81,50,.12); display:flex; align-items:center; justify-content:center; padding:14px; position:relative; overflow:hidden; }
+.southamerica-card:before { content:''; position:absolute; inset:18px; border-radius:50%; border:1px solid rgba(15,81,50,.08); box-shadow:0 0 0 32px rgba(15,81,50,.035),0 0 0 66px rgba(15,81,50,.025); }
+.sa-svg { width:min(210px,100%); height:auto; filter:drop-shadow(0 12px 18px rgba(15,81,50,.22)); }
+.hotspot { filter:drop-shadow(0 0 10px rgba(255,122,26,.95)); }
+@media (max-width:900px) { .hero-visual-grid { grid-template-columns:1fr; } .hero-map { min-height:auto; } .hero-map-head { align-items:flex-start; } }
 .public-cta { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }
 @media (max-width:900px) { .hero { grid-template-columns:1fr; } .price-grid { grid-template-columns:1fr; } .steps { grid-template-columns:1fr; } .hero h2 { font-size:32px; } }
 
@@ -549,9 +566,38 @@ def public_landing_body() -> str:
         <div class='notice'>Herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales de emergencia.</div>
       </div>
       <div class='hero-map'>
-        <h3>Monitoreo regional</h3>
-        <p class='small'>Focos FIRMS, radios de alerta, reportes y correos resumidos sin saturar al cliente.</p>
-        <div class='mini-map'></div>
+        <div class='hero-map-head'>
+          <div>
+            <h3>Monitoreo regional</h3>
+            <p class='small'>Cobertura en Sudamérica con alertas tempranas y seguimiento preventivo.</p>
+          </div>
+          <div class='hero-brand'><img src='{esc(config.LOGO_CAMPOSEGURO_URL)}' alt='CampoSeguro'><span>Campo<span>Seguro</span></span></div>
+        </div>
+        <div class='hero-visual-grid'>
+          <div class='hero-features'>
+            <div class='hero-feature'><div class='hero-icon'>⌖</div><div><b>Cobertura en Sudamérica</b><div class='small'>Monitoreo continuo de focos de calor en su región.</div></div></div>
+            <div class='hero-feature'><div class='hero-icon'>✉</div><div><b>Alertas por correo</b><div class='small'>Notificaciones automáticas cuando se detectan focos cercanos.</div></div></div>
+            <div class='hero-feature'><div class='hero-icon'>▥</div><div><b>Reportes operativos</b><div class='small'>Resumen diario y seguimiento para toma de decisiones.</div></div></div>
+          </div>
+          <div class='southamerica-card' aria-label='Mapa conceptual de Sudamérica'>
+            <svg class='sa-svg' viewBox='0 0 260 340' role='img' aria-label='Cobertura regional Sudamérica'>
+              <defs>
+                <linearGradient id='saGrad' x1='0' x2='1' y1='0' y2='1'>
+                  <stop offset='0%' stop-color='#2f7d4b'/><stop offset='100%' stop-color='#0f5132'/>
+                </linearGradient>
+                <radialGradient id='hotGrad'><stop offset='0%' stop-color='#fff6b3'/><stop offset='50%' stop-color='#ff7a1a'/><stop offset='100%' stop-color='rgba(255,122,26,0)'/></radialGradient>
+              </defs>
+              <path d='M111 18 L158 34 L191 66 L221 93 L224 126 L199 144 L182 184 L191 223 L171 252 L151 297 L127 324 L113 292 L121 247 L106 216 L88 186 L78 148 L61 122 L73 91 L57 60 L84 42 Z' fill='url(#saGrad)' opacity='.94'/>
+              <path d='M89 46 L116 70 L141 63 L158 91 L189 98 M79 119 L112 128 L134 151 L170 147 M105 217 L134 207 L166 224 M121 247 L151 297' fill='none' stroke='rgba(255,255,255,.32)' stroke-width='1.2'/>
+              <circle class='hotspot' cx='169' cy='132' r='20' fill='url(#hotGrad)'/>
+              <circle class='hotspot' cx='147' cy='230' r='18' fill='url(#hotGrad)'/>
+              <circle class='hotspot' cx='122' cy='273' r='13' fill='url(#hotGrad)'/>
+              <circle cx='169' cy='132' r='4' fill='#ff7a1a'/>
+              <circle cx='147' cy='230' r='4' fill='#ff7a1a'/>
+              <circle cx='122' cy='273' r='3' fill='#ffd166'/>
+            </svg>
+          </div>
+        </div>
       </div>
     </div>
     <div class='card'>
