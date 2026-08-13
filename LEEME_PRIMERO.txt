@@ -1,3 +1,1 @@
-CampoSeguro v4.2.8
-
 Subir app.py, config.py, README.md y LEEME_PRIMERO.txt. No subir camposeguro.db ni __pycache__.

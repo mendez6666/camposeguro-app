@@ -1,3 +1,3 @@
-# CampoSeguro v4.2.8 — precios solo en USD
+# CampoSeguro v4.2.9 — Google Maps corto y coordenadas
 
-Hotfix comercial: elimina referencias en bolivianos de la landing y de la página de planes. Todos los precios públicos quedan en USD para pagos online regionales.
+Hotfix: acepta coordenadas, URL completa de Google Maps y enlaces cortos maps.app.goo.gl cuando Google permite resolverlos. Precios solo en USD.

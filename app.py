@@ -11,6 +11,9 @@ import time
 import traceback
 from datetime import date, timedelta
 from typing import Any
+from urllib.parse import unquote
+from urllib.request import Request as UrlRequest, urlopen
+
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, JSONResponse, PlainTextResponse
@@ -154,15 +157,17 @@ def country_filter_options(selected: str | None = None) -> str:
     return ''.join(f"<option value='{esc(c)}' {'selected' if c == selected else ''}>{esc(c)}</option>" for c in countries)
 
 
-def parse_coordinates_text(text: str) -> tuple[float | None, float | None]:
-    """Extrae coordenadas desde Google Maps, texto libre o formato lat,lon."""
-    text = (text or "").strip()
+def _parse_coordinates_patterns(text: str) -> tuple[float | None, float | None]:
+    """Busca coordenadas en texto o URL ya expandida/decodificada."""
+    text = unquote((text or "").strip())
     if not text:
         return None, None
     patterns = [
-        r"@\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",      # https://maps.google.com/@lat,lon,zoom
-        r"[?&](?:q|ll|query)=\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",  # ?q=lat,lon
-        r"(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",             # lat, lon
+        r"@\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",
+        r"[?&](?:q|ll|query)=\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",
+        r"!3d(-?\d+(?:\.\d+)?)!4d(-?\d+(?:\.\d+)?)",
+        r"/place/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",
+        r"(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)",
     ]
     for pattern in patterns:
         m = re.search(pattern, text)
@@ -174,14 +179,55 @@ def parse_coordinates_text(text: str) -> tuple[float | None, float | None]:
     return None, None
 
 
+def _expand_google_maps_short_url(text: str) -> str:
+    """Expande enlaces cortos de Google Maps para intentar recuperar @lat,lon."""
+    match = re.search(r"https?://[^\s<>'\"]+", text or "")
+    if not match:
+        return ""
+    url = match.group(0).strip().rstrip('.,);]')
+    if not any(host in url.lower() for host in ["maps.app.goo.gl", "goo.gl/maps", "google.com/maps", "maps.google.com"]):
+        return ""
+    try:
+        req = UrlRequest(url, headers={"User-Agent": "Mozilla/5.0 CampoSeguro"})
+        with urlopen(req, timeout=8) as resp:
+            final_url = resp.geturl() or ""
+            # Leemos solo un fragmento por si Google deja coordenadas en el HTML/canonical.
+            try:
+                fragment = resp.read(80000).decode("utf-8", errors="ignore")
+            except Exception:
+                fragment = ""
+            return final_url + " " + fragment
+    except Exception:
+        return ""
+
+
+def parse_coordinates_text(text: str) -> tuple[float | None, float | None]:
+    """Extrae coordenadas desde Google Maps, enlace corto, texto libre o formato lat,lon."""
+    text = (text or "").strip()
+    if not text:
+        return None, None
+
+    lat, lon = _parse_coordinates_patterns(text)
+    if _valid_latlon(lat, lon):
+        return lat, lon
+
+    expanded = _expand_google_maps_short_url(text)
+    if expanded:
+        lat, lon = _parse_coordinates_patterns(expanded)
+        if _valid_latlon(lat, lon):
+            return lat, lon
+
+    return None, None
+
+
 def zone_location_widget(prefix: str = "") -> str:
     """Bloque de ayuda para cargar una zona desde GPS, Google Maps, coordenadas o clic en mapa."""
     return """
     <div class='notice'>
-      <b>Cómo registrar el punto:</b> puedes pegar un enlace de Google Maps, escribir coordenadas manuales, usar la ubicación actual del celular/computadora o hacer clic en el mapa. Si estás en la finca sin internet, guarda las coordenadas con el GPS del celular y cárgalas después cuando tengas conexión.
+      <b>Cómo registrar el punto:</b> puedes pegar coordenadas, la URL completa de Google Maps o un enlace corto tipo maps.app.goo.gl; también puedes usar la ubicación actual o hacer clic en el mapa. Si Google bloquea un enlace corto, copia las coordenadas que aparecen al compartir el punto. Si estás en la finca sin internet, guarda las coordenadas con el GPS del celular y cárgalas después.
     </div>
     <label>Enlace de Google Maps o coordenadas</label>
-    <textarea name='coords_text' rows='3' placeholder='Ejemplos: -17.7833, -63.1821  |  https://maps.google.com/?q=-17.7833,-63.1821'></textarea>
+    <textarea name='coords_text' rows='3' placeholder='Ejemplos: -17.7833, -63.1821  |  https://maps.google.com/?q=-17.7833,-63.1821  |  https://maps.app.goo.gl/...'></textarea>
     <div style='display:flex; gap:10px; flex-wrap:wrap; margin:8px 0 12px;'>
       <button class='btn' type='button' onclick='usarMiUbicacion()'>Usar mi ubicación actual</button>
       <button class='btn' type='button' onclick='centrarMapaEnFormulario()'>Ver punto en mapa</button>
@@ -240,7 +286,7 @@ def lat_lon_from_form(form) -> tuple[float, float]:
     if not _valid_latlon(lat, lon):
         lat, lon = parse_coordinates_text(str(form.get('coords_text','')))
     if not _valid_latlon(lat, lon):
-        raise ValueError("Coordenadas inválidas. Ingresa latitud/longitud o pega un enlace válido de Google Maps.")
+        raise ValueError("No se pudieron leer coordenadas. Pega latitud/longitud, la URL completa de Google Maps o copia las coordenadas que aparecen al compartir el punto.")
     return float(lat), float(lon)
 
 
