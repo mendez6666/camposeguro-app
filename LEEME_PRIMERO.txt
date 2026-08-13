@@ -1,5 +1,3 @@
-CampoSeguro v4.2.7
+CampoSeguro v4.2.8
 
-Subir a GitHub: app.py, config.py, README.md y LEEME_PRIMERO.txt.
-No cambiar variables de Render.
-Probar /healthz, /, /planes y /registro.
+Subir app.py, config.py, README.md y LEEME_PRIMERO.txt. No subir camposeguro.db ni __pycache__.

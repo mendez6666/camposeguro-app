@@ -580,7 +580,7 @@ def public_landing_body() -> str:
         <div class='hero-proof'>
           <div class='mini-stat'><b>5 días</b><span>prueba gratuita controlada</span></div>
           <div class='mini-stat'><b>USD</b><span>precios internacionales para tarjeta</span></div>
-          <div class='mini-stat'><b>Bs</b><span>referencia local para Bolivia</span></div>
+          <div class='mini-stat'><b>Tarjeta</b><span>cobro online en USD</span></div>
         </div>
         <div class='hero-note'>Servicio informativo para apoyar decisiones preventivas. No reemplaza verificación en campo ni sistemas oficiales.</div>
       </div>
@@ -606,9 +606,9 @@ def public_landing_body() -> str:
     <div class='card'>
       <h3>Planes iniciales</h3>
       <div class='price-grid'>
-        <div class='plan'><h3>Predio</h3><div class='price'>USD 8–15/mes</div><div class='small'>Bolivia: Bs 50–100/mes</div><ul class='checks'><li>1 a 2 zonas</li><li>Radio configurable</li><li>Resumen diario</li><li>Alertas críticas</li></ul></div>
-        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>USD 20–35/mes</div><div class='small'>Bolivia: Bs 150–250/mes</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reporte operativo</li><li>Correo anti-saturación</li><li>Soporte inicial</li></ul></div>
-        <div class='plan'><h3>Institucional</h3><div class='price'>USD 50–120/mes</div><div class='small'>Bolivia: Bs 300–800/mes</div><ul class='checks'><li>Varias zonas</li><li>Usuarios y reportes</li><li>Seguimiento territorial</li><li>Configuración asistida</li></ul></div>
+        <div class='plan'><h3>Predio</h3><div class='price'>USD 8–15/mes</div><div class='small'>Cobro mensual en USD</div><ul class='checks'><li>1 a 2 zonas</li><li>Radio configurable</li><li>Resumen diario</li><li>Alertas críticas</li></ul></div>
+        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>USD 20–35/mes</div><div class='small'>Cobro mensual en USD</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reporte operativo</li><li>Correo anti-saturación</li><li>Soporte inicial</li></ul></div>
+        <div class='plan'><h3>Institucional</h3><div class='price'>USD 50–120/mes</div><div class='small'>Cobro mensual en USD</div><ul class='checks'><li>Varias zonas</li><li>Usuarios y reportes</li><li>Seguimiento territorial</li><li>Configuración asistida</li></ul></div>
       </div>
       <div class='public-cta'><a class='btn primary' href='/registro'>Empezar prueba gratis</a><a class='btn' href='/planes'>Comparar planes</a></div>
     </div>
@@ -626,11 +626,11 @@ def planes(request: Request):
       <h2>Planes CampoSeguro</h2>
       <p>Empieza con una prueba gratuita de {esc(config.FREE_TRIAL_DAYS)} días. Tus zonas quedan guardadas si luego decides activar una suscripción.</p>
       <div class='price-grid'>
-        <div class='plan'><h3>Predio</h3><div class='price'>USD 8–15/mes</div><div class='small'>Bolivia: Bs 50–100/mes</div><ul class='checks'><li>1 a 2 zonas monitoreadas</li><li>Mapa y radio configurable</li><li>Resumen diario</li><li>Alertas críticas por correo</li></ul><a class='btn primary' href='/registro?plan=predio'>Probar gratis</a></div>
-        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>USD 20–35/mes</div><div class='small'>Bolivia: Bs 150–250/mes</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reportes operativos</li><li>Seguimiento preventivo</li><li>Configuración asistida inicial</li></ul><a class='btn primary' href='/registro?plan=productor'>Probar gratis</a></div>
-        <div class='plan'><h3>Institucional</h3><div class='price'>USD 50–120/mes</div><div class='small'>Bolivia: Bs 300–800/mes</div><ul class='checks'><li>Varias zonas y usuarios</li><li>Reportes para equipo técnico</li><li>Municipios, comunidades o proyectos</li><li>Acompañamiento de implementación</li></ul><a class='btn primary' href='/registro?plan=institucional'>Solicitar prueba</a></div>
+        <div class='plan'><h3>Predio</h3><div class='price'>USD 8–15/mes</div><div class='small'>Pago online mensual en USD</div><ul class='checks'><li>1 a 2 zonas monitoreadas</li><li>Mapa y radio configurable</li><li>Resumen diario</li><li>Alertas críticas por correo</li></ul><a class='btn primary' href='/registro?plan=predio'>Probar gratis</a></div>
+        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>USD 20–35/mes</div><div class='small'>Pago online mensual en USD</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reportes operativos</li><li>Seguimiento preventivo</li><li>Configuración asistida inicial</li></ul><a class='btn primary' href='/registro?plan=productor'>Probar gratis</a></div>
+        <div class='plan'><h3>Institucional</h3><div class='price'>USD 50–120/mes</div><div class='small'>Pago online mensual en USD</div><ul class='checks'><li>Varias zonas y usuarios</li><li>Reportes para equipo técnico</li><li>Municipios, comunidades o proyectos</li><li>Acompañamiento de implementación</li></ul><a class='btn primary' href='/registro?plan=institucional'>Solicitar prueba</a></div>
       </div>
-      <div class='notice'>Precios piloto referenciales: USD para clientes internacionales y bolivianos como referencia local para Bolivia. El pago con tarjeta se implementará en la siguiente etapa.</div>
+      <div class='notice'>Todos los precios están expresados en USD. El pago online con tarjeta se implementará en la siguiente etapa.</div>
     </div>
     """
     return layout("Planes", body, user if user else None)

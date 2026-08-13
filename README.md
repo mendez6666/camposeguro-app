@@ -1,3 +1,3 @@
-# CampoSeguro v4.2.7 — Landing limpia y precios USD/Bs
+# CampoSeguro v4.2.8 — precios solo en USD
 
-Hotfix visual: elimina la gráfica básica del hero, deja una tarjeta profesional sin mapa conceptual y muestra precios internacionales en USD con referencia local en bolivianos para Bolivia.
+Hotfix comercial: elimina referencias en bolivianos de la landing y de la página de planes. Todos los precios públicos quedan en USD para pagos online regionales.
