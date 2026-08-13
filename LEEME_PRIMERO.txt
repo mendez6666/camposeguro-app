@@ -1,1 +1,4 @@
-Subir app.py, config.py, README.md y LEEME_PRIMERO.txt. No subir camposeguro.db ni __pycache__.
+CampoSeguro v4.3.0
+Subir app.py, config.py, README.md y LEEME_PRIMERO.txt.
+No subir camposeguro.db ni __pycache__.
+Luego hacer Clear build cache & deploy en Render.

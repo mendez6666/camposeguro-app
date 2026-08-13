@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 APP_NAME = "CampoSeguro"
-APP_VERSION = "4.2.9"
+APP_VERSION = "4.3.0"
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -105,4 +105,12 @@ DEFAULT_PAID_DAYS = env_int("DEFAULT_PAID_DAYS", 30)
 PAYMENT_GRACE_DAYS = env_int("PAYMENT_GRACE_DAYS", 0)
 FREE_TRIAL_DAYS = env_int("FREE_TRIAL_DAYS", 5)
 TRIAL_MAX_ZONES = env_int("TRIAL_MAX_ZONES", 2)
+
+# Planes comerciales iniciales en USD
+PLAN_PREDIO_USD = env_int("PLAN_PREDIO_USD", 9)
+PLAN_PRODUCTOR_USD = env_int("PLAN_PRODUCTOR_USD", 25)
+PLAN_INSTITUCIONAL_USD = env_int("PLAN_INSTITUCIONAL_USD", 70)
+PLAN_PREDIO_MAX_ZONES = env_int("PLAN_PREDIO_MAX_ZONES", 2)
+PLAN_PRODUCTOR_MAX_ZONES = env_int("PLAN_PRODUCTOR_MAX_ZONES", 5)
+PLAN_INSTITUCIONAL_MAX_ZONES = env_int("PLAN_INSTITUCIONAL_MAX_ZONES", 20)
 

@@ -602,7 +602,7 @@ def public_landing_body() -> str:
       <div>
         <div class='badge INFORMATIVO'>Prueba gratuita de {esc(config.FREE_TRIAL_DAYS)} días</div>
         <h2>Alertas informativas de focos de calor para predios y zonas registradas en Sudamérica</h2>
-        <p class='lead'>CampoSeguro permite registrar una finca, predio, comunidad o municipio, definir un radio de alerta y recibir seguimiento preventivo cuando se detectan focos de calor cercanos.</p>
+        <p class='lead'>CampoSeguro permite registrar una finca, predio, comunidad o municipio, definir un radio de alerta y recibir seguimiento preventivo cuando se detectan focos de calor cercanos. La plataforma puede monitorear zonas registradas en toda Sudamérica.</p>
         <div class='public-cta'>
           <a class='btn primary' href='/registro'>Probar gratis {esc(config.FREE_TRIAL_DAYS)} días</a>
           <a class='btn' href='/planes'>Ver planes</a>
@@ -614,18 +614,18 @@ def public_landing_body() -> str:
         <div class='hero-map-head'>
           <div>
             <h3>Monitoreo preventivo regional</h3>
-            <p class='small'>Una plataforma simple para registrar zonas, ajustar radios y recibir avisos sin saturación.</p>
+            <p class='small'>Cobertura regional para zonas registradas en Sudamérica, con seguimiento por país, zona y radio configurado.</p>
           </div>
           <div class='hero-brand'><img src='{esc(config.LOGO_CAMPOSEGURO_URL)}' alt='CampoSeguro'><span>Campo<span>Seguro</span></span></div>
         </div>
         <div class='hero-trust-grid'>
-          <div class='hero-trust-item'><div class='hero-icon'>◎</div><div><b>Zonas y radios configurables</b><div class='small'>El cliente registra su finca, predio, comunidad o municipio y define el radio de seguimiento.</div></div></div>
+          <div class='hero-trust-item'><div class='hero-icon'>◎</div><div><b>Cobertura en Sudamérica</b><div class='small'>Monitorea zonas registradas en Bolivia, Paraguay, Brasil, Perú, Argentina, Chile y otros países de la región.</div></div></div>
           <div class='hero-trust-item'><div class='hero-icon'>✉</div><div><b>Resumen diario anti-saturación</b><div class='small'>Los focos se agrupan por zona para evitar decenas de correos innecesarios.</div></div></div>
           <div class='hero-trust-item'><div class='hero-icon'>▦</div><div><b>Alertas, mapa y reporte operativo</b><div class='small'>Panel privado para revisar mapa, zonas con alerta, distancia mínima y recomendaciones preventivas.</div></div></div>
         </div>
         <div class='hero-proof'>
           <div class='mini-stat'><b>5 días</b><span>prueba gratuita controlada</span></div>
-          <div class='mini-stat'><b>USD</b><span>precios internacionales para tarjeta</span></div>
+          <div class='mini-stat'><b>USD</b><span>precios fijos mensuales</span></div>
           <div class='mini-stat'><b>Tarjeta</b><span>cobro online en USD</span></div>
         </div>
         <div class='hero-note'>Servicio informativo para apoyar decisiones preventivas. No reemplaza verificación en campo ni sistemas oficiales.</div>
@@ -652,9 +652,9 @@ def public_landing_body() -> str:
     <div class='card'>
       <h3>Planes iniciales</h3>
       <div class='price-grid'>
-        <div class='plan'><h3>Predio</h3><div class='price'>USD 8–15/mes</div><div class='small'>Cobro mensual en USD</div><ul class='checks'><li>1 a 2 zonas</li><li>Radio configurable</li><li>Resumen diario</li><li>Alertas críticas</li></ul></div>
-        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>USD 20–35/mes</div><div class='small'>Cobro mensual en USD</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reporte operativo</li><li>Correo anti-saturación</li><li>Soporte inicial</li></ul></div>
-        <div class='plan'><h3>Institucional</h3><div class='price'>USD 50–120/mes</div><div class='small'>Cobro mensual en USD</div><ul class='checks'><li>Varias zonas</li><li>Usuarios y reportes</li><li>Seguimiento territorial</li><li>Configuración asistida</li></ul></div>
+        <div class='plan'><h3>Predio</h3><div class='price'>USD 9/mes</div><div class='small'>Cobro mensual en USD</div><ul class='checks'><li>Hasta 2 zonas</li><li>Radio configurable</li><li>Resumen diario</li><li>Alertas críticas</li></ul></div>
+        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>USD 25/mes</div><div class='small'>Cobro mensual en USD</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reporte operativo</li><li>Correo anti-saturación</li><li>Soporte inicial</li></ul></div>
+        <div class='plan'><h3>Institucional</h3><div class='price'>USD 70/mes</div><div class='small'>Cobro mensual en USD</div><ul class='checks'><li>Hasta 20 zonas</li><li>Usuarios y reportes</li><li>Seguimiento territorial</li><li>Configuración asistida</li></ul></div>
       </div>
       <div class='public-cta'><a class='btn primary' href='/registro'>Empezar prueba gratis</a><a class='btn' href='/planes'>Comparar planes</a></div>
     </div>
@@ -672,11 +672,11 @@ def planes(request: Request):
       <h2>Planes CampoSeguro</h2>
       <p>Empieza con una prueba gratuita de {esc(config.FREE_TRIAL_DAYS)} días. Tus zonas quedan guardadas si luego decides activar una suscripción.</p>
       <div class='price-grid'>
-        <div class='plan'><h3>Predio</h3><div class='price'>USD 8–15/mes</div><div class='small'>Pago online mensual en USD</div><ul class='checks'><li>1 a 2 zonas monitoreadas</li><li>Mapa y radio configurable</li><li>Resumen diario</li><li>Alertas críticas por correo</li></ul><a class='btn primary' href='/registro?plan=predio'>Probar gratis</a></div>
-        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>USD 20–35/mes</div><div class='small'>Pago online mensual en USD</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reportes operativos</li><li>Seguimiento preventivo</li><li>Configuración asistida inicial</li></ul><a class='btn primary' href='/registro?plan=productor'>Probar gratis</a></div>
-        <div class='plan'><h3>Institucional</h3><div class='price'>USD 50–120/mes</div><div class='small'>Pago online mensual en USD</div><ul class='checks'><li>Varias zonas y usuarios</li><li>Reportes para equipo técnico</li><li>Municipios, comunidades o proyectos</li><li>Acompañamiento de implementación</li></ul><a class='btn primary' href='/registro?plan=institucional'>Solicitar prueba</a></div>
+        <div class='plan'><h3>Predio</h3><div class='price'>USD 9/mes</div><div class='small'>Pago online mensual en USD</div><ul class='checks'><li>Hasta 2 zonas monitoreadas</li><li>Mapa y radio configurable</li><li>Resumen diario</li><li>Alertas críticas por correo</li></ul><a class='btn primary' href='/registro?plan=predio'>Probar gratis</a></div>
+        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>USD 25/mes</div><div class='small'>Pago online mensual en USD</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reportes operativos</li><li>Seguimiento preventivo</li><li>Configuración asistida inicial</li></ul><a class='btn primary' href='/registro?plan=productor'>Probar gratis</a></div>
+        <div class='plan'><h3>Institucional</h3><div class='price'>USD 70/mes</div><div class='small'>Pago online mensual en USD</div><ul class='checks'><li>Hasta 20 zonas y usuarios</li><li>Reportes para equipo técnico</li><li>Municipios, comunidades o proyectos</li><li>Acompañamiento de implementación</li></ul><a class='btn primary' href='/registro?plan=institucional'>Probar gratis</a></div>
       </div>
-      <div class='notice'>Todos los precios están expresados en USD. El pago online con tarjeta se implementará en la siguiente etapa.</div>
+      <div class='notice'><b>Cobertura regional:</b> CampoSeguro puede monitorear zonas registradas en Sudamérica. Todos los precios están expresados en USD y el pago online con tarjeta se implementará en la siguiente etapa.</div>
     </div>
     """
     return layout("Planes", body, user if user else None)
@@ -893,6 +893,7 @@ def cliente_inicio(request: Request):
       <a class='btn' href='/cliente/zonas'>Ajustar radios</a>
       <a class='btn' href='/cliente/alertas'>Ver alertas</a>
       <a class='btn' href='/cliente/reporte'>Ver reporte</a>
+      <a class='btn primary' href='/planes'>Activar suscripción</a>
     </div>
     <div class='notice'>Vista filtrada por tu usuario. Solo ves tus zonas y alertas.</div>
     """ + stats_grid(stats, client=True) + "<div class='notice'>CampoSeguro es una herramienta informativa. No reemplaza verificación en campo ni sistemas oficiales de emergencia.</div>"
