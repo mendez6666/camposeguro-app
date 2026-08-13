@@ -91,26 +91,25 @@ pre { background:#111827; color:#f9fafb; padding:18px; border-radius:12px; overf
 .steps { display:grid; grid-template-columns:repeat(4,minmax(160px,1fr)); gap:14px; }
 .step { background:#f8fafc; border-radius:14px; padding:16px; border:1px solid #e5e7eb; }
 .step b { display:block; margin-bottom:6px; color:#0f5132; }
-.hero-map { background:linear-gradient(145deg,#f4fbf6,#e6f5ec); border:1px solid #d8eadf; border-radius:22px; padding:24px; position:relative; overflow:hidden; box-shadow:0 14px 34px rgba(15,81,50,.14); min-height:360px; }
-.hero-map:before { content:''; position:absolute; inset:-40px; background:radial-gradient(circle at 78% 42%, rgba(255,122,26,.16), transparent 18%),radial-gradient(circle at 72% 68%, rgba(255,122,26,.13), transparent 15%),linear-gradient(120deg, rgba(255,255,255,.6), rgba(255,255,255,0)); pointer-events:none; }
+.hero-map { background:linear-gradient(145deg,#f8fdf9,#edf7f0); border:1px solid #d8eadf; border-radius:22px; padding:26px; position:relative; overflow:hidden; box-shadow:0 14px 34px rgba(15,81,50,.12); min-height:360px; }
+.hero-map:before { content:''; position:absolute; inset:0; background:linear-gradient(135deg,rgba(255,255,255,.82),rgba(255,255,255,.28)),radial-gradient(circle at 92% 8%,rgba(27,123,69,.10),transparent 28%); pointer-events:none; }
 .hero-map > * { position:relative; z-index:1; }
-.hero-map-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:14px; }
+.hero-map-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:18px; }
 .hero-map-head h3 { font-size:24px; margin:0 0 8px; }
 .hero-brand { display:flex; align-items:center; gap:8px; font-weight:900; color:#0f5132; white-space:nowrap; }
 .hero-brand img { width:44px; height:34px; object-fit:contain; }
 .hero-brand span span { color:#ff7a1a; }
-.hero-visual-grid { display:grid; grid-template-columns:1.05fr .95fr; gap:16px; align-items:center; }
-.hero-features { display:grid; gap:13px; }
-.hero-feature { display:grid; grid-template-columns:42px 1fr; gap:12px; align-items:start; padding:10px 0; border-bottom:1px solid rgba(15,81,50,.12); }
-.hero-feature:last-child { border-bottom:0; }
-.hero-icon { width:42px; height:42px; border-radius:50%; background:#0f5132; color:white; display:flex; align-items:center; justify-content:center; font-size:20px; box-shadow:0 8px 20px rgba(15,81,50,.18); }
-.hero-feature b { display:block; color:#17212b; margin-bottom:4px; }
-.hero-feature .small { line-height:1.45; }
-.southamerica-card { min-height:250px; border-radius:18px; background:linear-gradient(145deg,rgba(15,81,50,.14),rgba(255,255,255,.42)); border:1px solid rgba(15,81,50,.12); display:flex; align-items:center; justify-content:center; padding:14px; position:relative; overflow:hidden; }
-.southamerica-card:before { content:''; position:absolute; inset:18px; border-radius:50%; border:1px solid rgba(15,81,50,.08); box-shadow:0 0 0 32px rgba(15,81,50,.035),0 0 0 66px rgba(15,81,50,.025); }
-.sa-svg { width:min(210px,100%); height:auto; filter:drop-shadow(0 12px 18px rgba(15,81,50,.22)); }
-.hotspot { filter:drop-shadow(0 0 10px rgba(255,122,26,.95)); }
-@media (max-width:900px) { .hero-visual-grid { grid-template-columns:1fr; } .hero-map { min-height:auto; } .hero-map-head { align-items:flex-start; } }
+.hero-trust-grid { display:grid; gap:12px; margin-top:16px; }
+.hero-trust-item { display:grid; grid-template-columns:46px 1fr; gap:13px; align-items:start; background:rgba(255,255,255,.72); border:1px solid rgba(15,81,50,.10); border-radius:16px; padding:14px; box-shadow:0 5px 16px rgba(15,81,50,.055); }
+.hero-icon { width:46px; height:46px; border-radius:14px; background:#0f5132; color:white; display:flex; align-items:center; justify-content:center; font-size:21px; box-shadow:0 8px 20px rgba(15,81,50,.16); }
+.hero-trust-item b { display:block; color:#17212b; margin-bottom:5px; font-size:16px; }
+.hero-trust-item .small { line-height:1.45; }
+.hero-proof { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:18px; }
+.hero-proof .mini-stat { background:#0f5132; color:white; border-radius:14px; padding:14px; min-height:82px; }
+.hero-proof .mini-stat b { display:block; font-size:22px; margin-bottom:5px; }
+.hero-proof .mini-stat span { font-size:12px; opacity:.88; line-height:1.35; display:block; }
+.hero-note { margin-top:18px; background:#fff7ed; border-left:4px solid #ff7a1a; padding:12px 14px; border-radius:10px; color:#334155; font-size:14px; }
+@media (max-width:900px) { .hero-map { min-height:auto; } .hero-map-head { align-items:flex-start; } .hero-proof { grid-template-columns:1fr; } }
 .public-cta { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }
 @media (max-width:900px) { .hero { grid-template-columns:1fr; } .price-grid { grid-template-columns:1fr; } .steps { grid-template-columns:1fr; } .hero h2 { font-size:32px; } }
 
@@ -568,36 +567,22 @@ def public_landing_body() -> str:
       <div class='hero-map'>
         <div class='hero-map-head'>
           <div>
-            <h3>Monitoreo regional</h3>
-            <p class='small'>Cobertura en Sudamérica con alertas tempranas y seguimiento preventivo.</p>
+            <h3>Monitoreo preventivo regional</h3>
+            <p class='small'>Una plataforma simple para registrar zonas, ajustar radios y recibir avisos sin saturación.</p>
           </div>
           <div class='hero-brand'><img src='{esc(config.LOGO_CAMPOSEGURO_URL)}' alt='CampoSeguro'><span>Campo<span>Seguro</span></span></div>
         </div>
-        <div class='hero-visual-grid'>
-          <div class='hero-features'>
-            <div class='hero-feature'><div class='hero-icon'>⌖</div><div><b>Cobertura en Sudamérica</b><div class='small'>Monitoreo continuo de focos de calor en su región.</div></div></div>
-            <div class='hero-feature'><div class='hero-icon'>✉</div><div><b>Alertas por correo</b><div class='small'>Notificaciones automáticas cuando se detectan focos cercanos.</div></div></div>
-            <div class='hero-feature'><div class='hero-icon'>▥</div><div><b>Reportes operativos</b><div class='small'>Resumen diario y seguimiento para toma de decisiones.</div></div></div>
-          </div>
-          <div class='southamerica-card' aria-label='Mapa conceptual de Sudamérica'>
-            <svg class='sa-svg' viewBox='0 0 260 340' role='img' aria-label='Cobertura regional Sudamérica'>
-              <defs>
-                <linearGradient id='saGrad' x1='0' x2='1' y1='0' y2='1'>
-                  <stop offset='0%' stop-color='#2f7d4b'/><stop offset='100%' stop-color='#0f5132'/>
-                </linearGradient>
-                <radialGradient id='hotGrad'><stop offset='0%' stop-color='#fff6b3'/><stop offset='50%' stop-color='#ff7a1a'/><stop offset='100%' stop-color='rgba(255,122,26,0)'/></radialGradient>
-              </defs>
-              <path d='M111 18 L158 34 L191 66 L221 93 L224 126 L199 144 L182 184 L191 223 L171 252 L151 297 L127 324 L113 292 L121 247 L106 216 L88 186 L78 148 L61 122 L73 91 L57 60 L84 42 Z' fill='url(#saGrad)' opacity='.94'/>
-              <path d='M89 46 L116 70 L141 63 L158 91 L189 98 M79 119 L112 128 L134 151 L170 147 M105 217 L134 207 L166 224 M121 247 L151 297' fill='none' stroke='rgba(255,255,255,.32)' stroke-width='1.2'/>
-              <circle class='hotspot' cx='169' cy='132' r='20' fill='url(#hotGrad)'/>
-              <circle class='hotspot' cx='147' cy='230' r='18' fill='url(#hotGrad)'/>
-              <circle class='hotspot' cx='122' cy='273' r='13' fill='url(#hotGrad)'/>
-              <circle cx='169' cy='132' r='4' fill='#ff7a1a'/>
-              <circle cx='147' cy='230' r='4' fill='#ff7a1a'/>
-              <circle cx='122' cy='273' r='3' fill='#ffd166'/>
-            </svg>
-          </div>
+        <div class='hero-trust-grid'>
+          <div class='hero-trust-item'><div class='hero-icon'>◎</div><div><b>Zonas y radios configurables</b><div class='small'>El cliente registra su finca, predio, comunidad o municipio y define el radio de seguimiento.</div></div></div>
+          <div class='hero-trust-item'><div class='hero-icon'>✉</div><div><b>Resumen diario anti-saturación</b><div class='small'>Los focos se agrupan por zona para evitar decenas de correos innecesarios.</div></div></div>
+          <div class='hero-trust-item'><div class='hero-icon'>▦</div><div><b>Alertas, mapa y reporte operativo</b><div class='small'>Panel privado para revisar mapa, zonas con alerta, distancia mínima y recomendaciones preventivas.</div></div></div>
         </div>
+        <div class='hero-proof'>
+          <div class='mini-stat'><b>5 días</b><span>prueba gratuita controlada</span></div>
+          <div class='mini-stat'><b>USD</b><span>precios internacionales para tarjeta</span></div>
+          <div class='mini-stat'><b>Bs</b><span>referencia local para Bolivia</span></div>
+        </div>
+        <div class='hero-note'>Servicio informativo para apoyar decisiones preventivas. No reemplaza verificación en campo ni sistemas oficiales.</div>
       </div>
     </div>
     <div class='card'>
@@ -621,9 +606,9 @@ def public_landing_body() -> str:
     <div class='card'>
       <h3>Planes iniciales</h3>
       <div class='price-grid'>
-        <div class='plan'><h3>Predio</h3><div class='price'>Bs 50–100/mes</div><ul class='checks'><li>1 a 2 zonas</li><li>Radio configurable</li><li>Resumen diario</li><li>Alertas críticas</li></ul></div>
-        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>Bs 150–250/mes</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reporte operativo</li><li>Correo anti-saturación</li><li>Soporte inicial</li></ul></div>
-        <div class='plan'><h3>Institucional</h3><div class='price'>Bs 300–800/mes</div><ul class='checks'><li>Varias zonas</li><li>Usuarios y reportes</li><li>Seguimiento territorial</li><li>Configuración asistida</li></ul></div>
+        <div class='plan'><h3>Predio</h3><div class='price'>USD 8–15/mes</div><div class='small'>Bolivia: Bs 50–100/mes</div><ul class='checks'><li>1 a 2 zonas</li><li>Radio configurable</li><li>Resumen diario</li><li>Alertas críticas</li></ul></div>
+        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>USD 20–35/mes</div><div class='small'>Bolivia: Bs 150–250/mes</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reporte operativo</li><li>Correo anti-saturación</li><li>Soporte inicial</li></ul></div>
+        <div class='plan'><h3>Institucional</h3><div class='price'>USD 50–120/mes</div><div class='small'>Bolivia: Bs 300–800/mes</div><ul class='checks'><li>Varias zonas</li><li>Usuarios y reportes</li><li>Seguimiento territorial</li><li>Configuración asistida</li></ul></div>
       </div>
       <div class='public-cta'><a class='btn primary' href='/registro'>Empezar prueba gratis</a><a class='btn' href='/planes'>Comparar planes</a></div>
     </div>
@@ -641,11 +626,11 @@ def planes(request: Request):
       <h2>Planes CampoSeguro</h2>
       <p>Empieza con una prueba gratuita de {esc(config.FREE_TRIAL_DAYS)} días. Tus zonas quedan guardadas si luego decides activar una suscripción.</p>
       <div class='price-grid'>
-        <div class='plan'><h3>Predio</h3><div class='price'>Bs 50–100/mes</div><ul class='checks'><li>1 a 2 zonas monitoreadas</li><li>Mapa y radio configurable</li><li>Resumen diario</li><li>Alertas críticas por correo</li></ul><a class='btn primary' href='/registro?plan=predio'>Probar gratis</a></div>
-        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>Bs 150–250/mes</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reportes operativos</li><li>Seguimiento preventivo</li><li>Configuración asistida inicial</li></ul><a class='btn primary' href='/registro?plan=productor'>Probar gratis</a></div>
-        <div class='plan'><h3>Institucional</h3><div class='price'>Bs 300–800/mes</div><ul class='checks'><li>Varias zonas y usuarios</li><li>Reportes para equipo técnico</li><li>Municipios, comunidades o proyectos</li><li>Acompañamiento de implementación</li></ul><a class='btn primary' href='/registro?plan=institucional'>Solicitar prueba</a></div>
+        <div class='plan'><h3>Predio</h3><div class='price'>USD 8–15/mes</div><div class='small'>Bolivia: Bs 50–100/mes</div><ul class='checks'><li>1 a 2 zonas monitoreadas</li><li>Mapa y radio configurable</li><li>Resumen diario</li><li>Alertas críticas por correo</li></ul><a class='btn primary' href='/registro?plan=predio'>Probar gratis</a></div>
+        <div class='plan featured'><h3>Campo / Productor</h3><div class='price'>USD 20–35/mes</div><div class='small'>Bolivia: Bs 150–250/mes</div><ul class='checks'><li>Hasta 5 zonas</li><li>Reportes operativos</li><li>Seguimiento preventivo</li><li>Configuración asistida inicial</li></ul><a class='btn primary' href='/registro?plan=productor'>Probar gratis</a></div>
+        <div class='plan'><h3>Institucional</h3><div class='price'>USD 50–120/mes</div><div class='small'>Bolivia: Bs 300–800/mes</div><ul class='checks'><li>Varias zonas y usuarios</li><li>Reportes para equipo técnico</li><li>Municipios, comunidades o proyectos</li><li>Acompañamiento de implementación</li></ul><a class='btn primary' href='/registro?plan=institucional'>Solicitar prueba</a></div>
       </div>
-      <div class='notice'>Los precios piloto pueden ajustarse según número de zonas, país, nivel de soporte y alcance institucional.</div>
+      <div class='notice'>Precios piloto referenciales: USD para clientes internacionales y bolivianos como referencia local para Bolivia. El pago con tarjeta se implementará en la siguiente etapa.</div>
     </div>
     """
     return layout("Planes", body, user if user else None)

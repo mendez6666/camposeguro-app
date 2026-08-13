@@ -1,22 +1,5 @@
-CampoSeguro v4.2.6 — landing profesional
+CampoSeguro v4.2.7
 
-1) Subir a GitHub:
-   - app.py
-   - config.py
-   - README.md
-   - LEEME_PRIMERO.txt
-
-2) No subir:
-   - camposeguro.db
-   - __pycache__
-   - archivos .pyc
-
-3) En Render no cambiar variables.
-
-4) Deploy: Manual Deploy -> Clear build cache & deploy.
-
-5) Probar:
-   /healthz
-   /
-   /planes
-   /registro
+Subir a GitHub: app.py, config.py, README.md y LEEME_PRIMERO.txt.
+No cambiar variables de Render.
+Probar /healthz, /, /planes y /registro.
